@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #e6eef8;
+  background: #0d1727;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #0d1727;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(105, 202, 216, 0.16), transparent 25%),
+    radial-gradient(circle at top right, rgba(167, 152, 245, 0.18), transparent 24%),
+    #0d1727;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(105, 202, 216, 0.45);
+  border-radius: 9999px;
+}
+
+.glass-panel {
+  @apply rounded-3xl border border-white/10 bg-slate-900/55 shadow-glow backdrop-blur-xl;
+}
+
+.grid-sheen {
+  background-image: linear-gradient(to right, rgba(255,255,255,0.04), rgba(255,255,255,0.01), rgba(255,255,255,0.04));
+}
