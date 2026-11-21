@@ -28,6 +28,8 @@ const accents = [
 ]
 
 export default function ProjectAccess() {
+  const dashboardPreview = import.meta.env.DEV
+    && new URLSearchParams(window.location.search).get('preview') === 'dashboard'
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured)
   const [page, setPage] = useState<Page>(isSupabaseConfigured ? 'loading' : 'auth')
@@ -65,7 +67,7 @@ export default function ProjectAccess() {
   const userEmail = session?.user.email ?? ''
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return
+    if (!isSupabaseConfigured || dashboardPreview) return
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (event === 'PASSWORD_RECOVERY') {
@@ -89,7 +91,7 @@ export default function ProjectAccess() {
     })
 
     return () => subscription.unsubscribe()
-  }, [])
+  }, [dashboardPreview])
 
   const openProject = useCallback(async (project: ProjectSummary, membership: ProjectMemberRecord) => {
     setPage('loading')
@@ -149,7 +151,7 @@ export default function ProjectAccess() {
   }, [userId])
 
   useEffect(() => {
-    if (!authReady) return
+    if (!authReady || dashboardPreview) return
     if (!userId) {
       return
     }
@@ -224,7 +226,24 @@ export default function ProjectAccess() {
 
     void loadProjects()
     return () => { active = false }
-  }, [authReady, inviteToken, openProject, preferredProjectId, reloadCounter, userId])
+  }, [authReady, dashboardPreview, inviteToken, openProject, preferredProjectId, reloadCounter, userId])
+
+  if (dashboardPreview) {
+    return (
+      <>
+        <div className="sticky top-0 z-30 border-b border-amber-300/20 bg-amber-950/90 px-4 py-2 text-center text-xs font-medium text-amber-100 backdrop-blur">
+          Local preview · sample data only · not connected to a live account
+        </div>
+        <App
+          hackathonName="Aithya Build Sprint"
+          projectDescription="A collaborative AI-driven platform that helps teams learn, coordinate, and ship with confidence."
+          projectName="Aithya Build Sprint"
+          userEmail="preview@example.com"
+          workflowStatus="provided"
+        />
+      </>
+    )
+  }
 
   const chooseProject = (project: ProjectSummary) => {
     const membership = memberOptions.find((member) => member.project_id === project.id)

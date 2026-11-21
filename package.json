@@ -14,7 +14,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^7.0.2",
-    "@supabase/supabase-js": "^2.118.0",
+    "@supabase/supabase-js": "^2.119.0",
     "@tailwindcss/forms": "^0.5.11",
     "autoprefixer": "^10.6.2",
     "framer-motion": "^14.9.0",
@@ -34,6 +34,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "oxlint": "^1.89.0",
+    "supabase": "^3.0.0",
     "typescript": "~7.0.2",
     "vite": "^8.3.5"
   }

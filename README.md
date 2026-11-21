@@ -29,6 +29,8 @@ Aithya is a Midnight Glass project-building and collaboration platform. The exis
 
 Without both real frontend values, the authentication and database flows remain disabled; placeholder credentials are not treated as a successful connection.
 
+For a local visual preview of the post-login dashboard without connecting an account, run Vite and open `http://localhost:5173/?preview=dashboard`. This preview is available only in development and uses sample dashboard data.
+
 ## Supabase setup for project onboarding
 
 The migration in `supabase/migrations/20261104220000_project_onboarding.sql` creates profiles, projects, team memberships, requirements, AI constraints, private documents, invitations, and project-scoped skills. It also creates the private `project-documents` Storage bucket, RLS policies, and the database functions used for atomic project setup, member onboarding, invitation claim, and finalization.
