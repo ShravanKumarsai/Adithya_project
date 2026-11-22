@@ -827,7 +827,7 @@ export function mountPersonalStudio(ctx) {
       "</header>" +
       '<div id="v3-direct-log" class="studio-chat-log" role="log" aria-live="polite"></div><div class="studio-composer">' +
       '<details><summary>Actions</summary><div class="chat-actions">' +
-      button("summarize-direct", "Summarize this thread") +
+      
       (thread.creator_id === user
         ? button(
             "resolve-direct",
@@ -893,38 +893,6 @@ export function mountPersonalStudio(ctx) {
         box.querySelector("#direct-attachment-name").textContent = "";
         await loadMessages(threadId);
       },
-      box,
-    );
-    bind(
-      "summarize-direct",
-      () =>
-        form(
-          "Summarize private thread",
-          yes(
-            "consent",
-            "Send up to 40 recent messages in this thread to Gemini",
-            false,
-          ),
-          async (f) => {
-            if (!f.has("consent"))
-              throw Error("Check the sharing option to continue.");
-          },
-          async () => {
-            const response = await aiJSON(
-              "direct.summary",
-              { threadId },
-              () => ({
-                summary: messages.length + " recent messages.",
-                decisions: [],
-                open: messages
-                  .filter((m) => m.body.includes("?"))
-                  .slice(-5)
-                  .map((m) => m.body),
-              }),
-            );
-            draft("direct.summary", response);
-          },
-        ),
       box,
     );
     bind(
@@ -1025,8 +993,50 @@ export function mountPersonalStudio(ctx) {
     }
     await drawThreads();
   }
+  async function registration(){
+    await loadDetails();
+    if(!root.isConnected)return;
+    const person=accepted.find(m=>m.user_id===user);
+    const availability=data.availability.find(a=>a.user_id===user)||{};
+    const known=data.skills.filter(s=>s.user_id===user);
+    const interests=(person?.interests||[]);
+    add(panel("Register",'<form id="studio-register" class="shared-form">'+
+      '<label>Email<input type="email" readonly value="'+escape(session.user.email||"")+'"></label>'+
+      field("full_name","Full name",person?.full_name||session.user.user_metadata?.full_name||"","text","required")+
+      field("interests","Interests",Array.isArray(interests)?interests.join(", "):interests,"textarea",'maxlength="1000"')+
+      field("expertise","Expertise",details.expertise,"textarea",'maxlength="1800"')+
+      field("history","Past hackathon roles",details.history,"textarea",'maxlength="2500"')+
+      '<div class="studio-standup-fields">'+field("past","Hours per week in past hackathons",details.past_hours||0,"number",'min="0" max="168"')+
+      field("hours","Available hours per week",availability.weekly_hours||0,"number",'min="0" max="168" required')+'</div>'+
+      '<fieldset><legend>Skills · 0–5</legend><div class="studio-standup-fields">'+studioSkills.map((skill,i)=>
+        field("skill"+i,skill,details.ratings?.[skill]??rank[known.find(s=>s.skill_name===skill)?.self_assessed_level]??0,"number",'min="0" max="5" step="1" required')).join("")+
+      '</div></fieldset><button class="button primary" type="submit">Save profile and draft role</button></form>'));
+    const form=root.querySelector("#studio-register");
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const submit=event.submitter;submit.disabled=true;
+      try{
+        const values=new FormData(form),hours=Number(values.get("hours"));
+        const ratings=Object.fromEntries(studioSkills.map((skill,i)=>[skill,Number(values.get("skill"+i))]));
+        const existing=known.map(s=>({skill_name:s.skill_name,category:s.category,proficiency:s.self_assessed_level,evidence:s.self_evidence||""}));
+        const levels=["","beginner","intermediate","intermediate","advanced","expert"];
+        for(const [skill,level] of Object.entries(ratings)){
+          const current=existing.find(s=>s.skill_name.toLowerCase()===skill.toLowerCase());
+          if(level>0&&current)current.proficiency=levels[level];
+          else if(level>0)existing.push({skill_name:skill,category:"General",proficiency:levels[level],evidence:""});
+        }
+        await rpc("save_complete_member_profile",{p_project_id:id,p_profile:{full_name:values.get("full_name"),interests:String(values.get("interests")).split(/,|\n/).map(x=>x.trim()).filter(Boolean),preferred_technologies:[],availability:hours+" hours per week"},p_skills:existing,p_availability:{...availability,weekly_hours:hours,timezone:availability.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone}});
+        await saveDetails({expertise:values.get("expertise"),history:values.get("history"),past_hours:Number(values.get("past")),ratings});
+        details={...details,ratings};
+        notify("Profile saved.");
+        const answer=await aiJSON("role.analysis",{},roleFallback);
+        draft("role.analysis",answer,role=>saveDetails({role_draft:role}),"Save suggested role");
+      }catch(e){notify(e.message)}finally{submit.disabled=false}
+    };
+  }
   const endpoint = {
     Gemini: "/api/planning/key",
+    GitHub: "/api/github/token",
     Vercel: "/api/vercel/token",
   };
   async function connection(tool, method = "GET", key, check = false) {
@@ -1090,6 +1100,7 @@ export function mountPersonalStudio(ctx) {
       ),
     );
     if (leader) {
+      add('<div id="v3-connectors" class="setup-columns"></div>');
       bind("repository", editConnections);
       bind("policy", editPolicy);
       const items = await Promise.all(
@@ -1102,9 +1113,9 @@ export function mountPersonalStudio(ctx) {
       root.querySelector("#v3-connectors").innerHTML = items
         .map(
           ([tool, status]) =>
-            '<article class="bp-card"><strong>' +
+            '<article class="bp-panel settings-connection"><header><h2>' +
             tool +
-            "</strong><p>" +
+            '</h2><span class="studio-chip '+(status?.configured?"ok":"warn")+'">' +
             escape(
               status
                 ? status.configured
@@ -1112,7 +1123,8 @@ export function mountPersonalStudio(ctx) {
                   : "Not added"
                 : "Status unavailable",
             ) +
-            "</p>" +
+            "</span></header>" +
+            (tool==="GitHub"?'<p>'+escape(project.repository||"Choose a repository")+'</p>':tool==="Vercel"?'<p>'+escape(project.vercel_project_id||"Choose a Vercel project")+'</p>':"")+
             (tool === "Gemini" && status?.remaining !== undefined
               ? "<p>" +
                 Number(status.remaining) +
@@ -1161,6 +1173,7 @@ export function mountPersonalStudio(ctx) {
     Chat: ctx.data.personalReady ? chats : undefined,
     "AI credits": () => showCredits(),
     Settings: settings,
+    Register:registration,
   }[tab];
   if (!page) return () => {};
   page().catch((err) => notify(err.message));

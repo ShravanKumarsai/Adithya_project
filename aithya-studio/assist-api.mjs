@@ -79,6 +79,7 @@ async function assembleAssistContext(
       task.startsWith("personal.") ||
       task.startsWith("learning.") ||
       task === "role.analysis" ||
+      task === "item.brief" ||
       task === "skills.normalize";
     const tasksNeeded = needed.includes("tasks") || needed.includes("metrics");
     const [members, skills, tasks, availability] = await Promise.all([
@@ -161,25 +162,55 @@ async function assembleAssistContext(
     });
     result.help = JSON.stringify(threads.filter((t) => t.skill));
   }
+  if (needed.includes("standups")) {
+    const day = new Date().toISOString().slice(0, 10);
+    const entries = await rows("studio_standups", "done,next", {
+      day: "eq." + day,
+      limit: "12",
+    });
+    result.standups = entries
+      .map((r) => "Done: " + r.done + " Next: " + r.next)
+      .join("\n");
+  }
+  if (needed.includes("report")) {
+    const [members, tasks, time] = await Promise.all([
+      rows("project_members", "full_name,user_id,role", {
+        status: "eq.accepted",
+        limit: "12",
+      }),
+      rows("project_tasks", "owner_id,status,completed_at,due_date", {
+        limit: "300",
+      }),
+      rows("studio_work_log", "user_id,minutes", { limit: "400" }),
+    ]);
+    result.report = JSON.stringify(
+      members.map((m) => {
+        const completed = tasks.filter(
+          (t) => t.owner_id === m.user_id && t.status === "done",
+        );
+        return {
+          name: m.full_name,
+          role: m.role,
+          done: completed.length,
+          onTime: completed.filter(
+            (t) =>
+              t.completed_at &&
+              t.due_date &&
+              t.completed_at.slice(0, 10) <= t.due_date,
+          ).length,
+          minutes: time
+            .filter((t) => t.user_id === m.user_id)
+            .reduce((sum, t) => sum + Number(t.minutes), 0),
+        };
+      }),
+    );
+  }
   if (needed.includes("messages")) {
-    const messages =
-      task === "direct.summary"
-        ? uuidPattern.test(input.threadId || "")
-          ? await getAssistRows(authorization, "studio_thread_messages", {
-              thread_id: "eq." + input.threadId,
-              limit: "40",
-              order: "created_at.desc",
-              "studio_threads.project_id": "eq." + id,
-              select: "body,studio_threads!inner(project_id)",
-            })
-          : []
-        : await rows("project_messages", "body", {
-            limit: "40",
-            order: "created_at.desc",
-            ...(task === "standup" ? { kind: "eq.standup" } : {}),
-          });
-    if (task === "direct.summary" && !messages.length)
-      throw Error("Private thread unavailable or empty");
+    const messages = await rows("project_messages", "body", {
+      limit: "40",
+      order: "created_at.desc",
+      ...(task === "standup" ? { kind: "eq.standup" } : {}),
+    });
     result.messages = messages
       .reverse()
       .map((m) => m.body)
@@ -242,7 +273,12 @@ async function studioAssist(request, env, url, user) {
       typeof payload.projectId === "string"
         ? payload.projectId.toLowerCase()
         : "";
-    task = payload.task;
+    task = payload.task === "role.analyze" ? "role.analysis" : payload.task;
+    if (task === "direct.summary")
+      return json(
+        { error: "Private conversations stay out of AI requests." },
+        403,
+      );
     const input = payload.input;
     if (
       !uuidPattern.test(id) ||

@@ -1,3 +1,7 @@
+import {
+  applyStudioAppearance,
+  studioAppearance,
+} from "./studio-appearance.js";
 const entryFields = [
   ["title", "Project or case study title", 120, true],
   ["subtitle", "Role or context", 160],
@@ -124,7 +128,17 @@ export async function renderPortfolio({
   const view = main.querySelector("#portfolio-view");
   const open = () => view.isConnected;
   async function load() {
-    const [profile, entries, projects, logs] = await Promise.all([
+    const [
+      profile,
+      entries,
+      projects,
+      logs,
+      history,
+      completed,
+      ai,
+      skills,
+      availability,
+    ] = await Promise.all([
       result(
         db.from("portfolios").select("*").eq("user_id", user.id).maybeSingle(),
       ),
@@ -137,31 +151,73 @@ export async function renderPortfolio({
       ),
       result(db.from("projects").select("id,name,archived_at").order("name")),
       result(
-        db.from("studio_work_log").select("minutes").eq("user_id", user.id),
+        db
+          .from("studio_work_log")
+          .select("minutes,work_day")
+          .eq("user_id", user.id),
+      ).catch(() => []),
+      result(
+        db
+          .from("studio_portfolio_history")
+          .select("project_id,project_name,closed_at,contribution")
+          .eq("user_id", user.id)
+          .order("closed_at", { ascending: false }),
+      ).catch(() => []),
+      result(
+        db
+          .from("project_tasks")
+          .select("id")
+          .eq("owner_id", user.id)
+          .eq("status", "done"),
+      ).catch(() => []),
+      result(
+        db.from("ai_runs").select("id").eq("user_id", user.id).eq("ok", true),
+      ).catch(() => []),
+      result(
+        db.from("user_skills").select("skill_name").eq("user_id", user.id),
+      ).catch(() => []),
+      result(
+        db
+          .from("member_availability")
+          .select("weekly_hours")
+          .eq("user_id", user.id),
       ).catch(() => []),
     ]);
     if (!open()) return;
-    let appearance = { theme: "night", icon: "medium", showStats: false };
+    const appStyle = studioAppearance();
+    const appearance = {
+      theme: { dark: "night", light: "paper", blueprint: "blueprint" }[
+        appStyle.theme
+      ],
+      icon: appStyle.icon,
+      showStats: false,
+    };
     try {
-      const v = JSON.parse(
-        localStorage.getItem("aithya.portfolio." + user.id) || "{}",
-      );
-      if (["night", "paper", "blueprint"].includes(v.theme))
-        appearance.theme = v.theme;
-      if (["small", "medium", "large"].includes(v.icon))
-        appearance.icon = v.icon;
-      appearance.showStats = v.showStats === true;
+      appearance.showStats =
+        JSON.parse(localStorage.getItem("aithya.portfolio." + user.id) || "{}")
+          .showStats === true;
     } catch {}
-    const active = projects.filter((p) => !p.archived_at).length,
-      hours =
-        Math.round(logs.reduce((n, r) => n + Number(r.minutes), 0) / 6) / 10;
-    const stats =
-      active +
-      " active " +
-      (active === 1 ? "project" : "projects") +
-      " · " +
-      hours +
-      " logged hours";
+    const closed = new Set(history.map((h) => h.project_id));
+    const active = projects.filter(
+      (p) => !p.archived_at && !closed.has(p.id),
+    ).length;
+    const hours =
+      Math.round(logs.reduce((n, r) => n + Number(r.minutes), 0) / 6) / 10;
+    const weekly = availability.reduce(
+      (sum, a) => sum + Number(a.weekly_hours),
+      0,
+    );
+    const numbers = [
+      ["Hours per week", weekly],
+      ["In progress", active],
+      ["Hackathons finished", history.length],
+      ["Tasks done", completed.length],
+      ["Hours logged", hours],
+      ["Studio AI prompts", ai.length],
+    ];
+    const stats = numbers
+      .map(([label, value]) => value + " " + label.toLowerCase())
+      .join(" · ");
     appearance.stats = appearance.showStats ? stats : "";
     const draft = profile || {
       display_name: user.user_metadata?.full_name || "",
@@ -176,9 +232,38 @@ export async function renderPortfolio({
       button("portfolio-add", "Add case study") +
       button("portfolio-appearance", "Customize design") +
       (profile ? button("portfolio-download", "Download HTML") : "") +
-      '</div><p class="portfolio-private-stats">' +
-      escape(stats) +
-      "</p>" +
+      '</div><div class="studio-metrics portfolio-number-row">' +
+      numbers
+        .map(
+          ([label, value]) =>
+            "<div><small>" +
+            escape(label) +
+            "</small><strong>" +
+            value +
+            "</strong></div>",
+        )
+        .join("") +
+      "</div>" +
+      (history.length
+        ? "<h3>Project history</h3>" +
+          history
+            .map(
+              (h) =>
+                '<div class="shared-row"><div><strong>' +
+                escape(h.project_name) +
+                "</strong><p>" +
+                Number(h.contribution?.completed || 0) +
+                " tasks · " +
+                Number(h.contribution?.hours || 0) +
+                " logged hours</p></div></div>",
+            )
+            .join("")
+        : "") +
+      (skills.length
+        ? "<h3>Skills</h3><p>" +
+          escape([...new Set(skills.map((s) => s.skill_name))].join(" · ")) +
+          "</p>"
+        : "") +
       entries
         .map(
           (entry) =>
@@ -205,34 +290,47 @@ export async function renderPortfolio({
           "theme",
           "Theme",
           [
-            ["night", "Night"],
-            ["paper", "Paper"],
+            ["dark", "Midnight"],
+            ["light", "Light"],
             ["blueprint", "Blueprint"],
           ],
-          appearance.theme,
+          appStyle.theme,
         ) +
+          select(
+            "accent",
+            "Accent",
+            [
+              ["blue", "Blue"],
+              ["green", "Green"],
+              ["amber", "Amber"],
+              ["rose", "Rose"],
+            ],
+            appStyle.accent,
+          ) +
           select(
             "icon",
             "Profile icon size",
             [
-              ["small", "Small"],
-              ["medium", "Medium"],
-              ["large", "Large"],
+              ["small", "14 px"],
+              ["medium", "16 px"],
+              ["large", "20 px"],
             ],
             appearance.icon,
           ) +
           '<label><input name="stats" type="checkbox" ' +
           (appearance.showStats ? "checked" : "") +
           "> Include project and time totals in the shareable portfolio</label>",
-        (f) =>
+        (f) => {
+          applyStudioAppearance({
+            theme: f.get("theme"),
+            accent: f.get("accent"),
+            icon: f.get("icon"),
+          });
           localStorage.setItem(
             "aithya.portfolio." + user.id,
-            JSON.stringify({
-              theme: f.get("theme"),
-              icon: f.get("icon"),
-              showStats: f.has("stats"),
-            }),
-          ),
+            JSON.stringify({ showStats: f.has("stats") }),
+          );
+        },
         load,
       ),
     );

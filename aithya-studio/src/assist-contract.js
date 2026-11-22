@@ -15,7 +15,12 @@ const obj = (properties) => ({
   properties,
   required: Object.keys(properties),
 });
-const action = obj({ t: str, sk: skill, h: num, owner: str });
+const action = obj({
+  t: str,
+  sk: skill,
+  h: num,
+  owner: { ...str, minLength: 0 },
+});
 const plannedTask = obj({
   t: str,
   sk: skill,
@@ -23,15 +28,38 @@ const plannedTask = obj({
   dep: { type: ["integer", "null"] },
 });
 const milestone = obj({ name: str, due: str });
-export const taskInputFields = [
-  "rules",
-  "title",
-  "notes",
-  "question",
-  "log",
-  "threadId",
-];
+export const taskInputFields = ["rules", "title", "notes", "question", "log"];
 export const assistContracts = {
+  "tasks.extract": [
+    ["notes", "team"],
+    "Extract actionable tasks from the pasted text. Infer a safe estimate and only name a teammate when clear.",
+    obj({ actions: arr(action) }),
+  ],
+  "item.brief": [
+    ["title", "skills"],
+    "Explain this note for the viewer's skill level in about 70 words. Give a concrete first step and an official-documentation search phrase. Never output a link.",
+    obj({ explain: str, step: str, lookup: str }),
+  ],
+  "task.ideas": [
+    ["title", "tasks"],
+    "Suggest three distinct task titles in the selected field. Avoid existing tasks.",
+    obj({ ideas: arr(str, 3) }),
+  ],
+  "digest.daily": [
+    ["project", "tasks", "metrics"],
+    "Write a short digest with observed progress, blockers and one next action.",
+    obj({ progress: str, blockers: arr(str, 5), next: str }),
+  ],
+  "standup.merge": [
+    ["standups"],
+    "Combine today's team stand-ups and list any explicit blockers.",
+    obj({ update: str, blockers: arr(str, 5) }),
+  ],
+  "report.write": [
+    ["report"],
+    "Using only supplied counts and roles, write a team note and one short note per contributor. Do not invent accomplishments.",
+    obj({ team: str, members: arr(obj({ name: str, text: str })) }),
+  ],
   "role.analysis": [
     ["profile", "project", "skills", "tasks"],
     "Using skills, experience and capacity, suggest a role of at most five words, up to three short areas, and a reason of at most 25 words.",
@@ -51,11 +79,6 @@ export const assistContracts = {
     ["question", "project", "tasks"],
     "Draft a short help request including a clear question and what evidence to include. Never invent work that was tried.",
     obj({ text: str }),
-  ],
-  "direct.summary": [
-    ["messages"],
-    "Summarize ONLY the explicitly selected private conversation. Include decisions and open questions.",
-    obj({ summary: str, decisions: arr(str), open: arr(str) }),
   ],
   "project.intake": [
     ["project", "requirements", "skills", "team"],
@@ -189,7 +212,7 @@ export function cleanResult(schema, value) {
   if (
     schema.type === "string" &&
     typeof value === "string" &&
-    value.trim() &&
+    (value.trim() || schema.minLength === 0) &&
     (!schema.enum || schema.enum.includes(value))
   )
     return value.trim().slice(0, 4500);

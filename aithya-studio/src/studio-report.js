@@ -32,6 +32,7 @@ export function reportRows(members, tasks, time, accounts, calls) {
         }
       }
       return {
+        id,
         name: member.full_name,
         role: member.role || "Member",
         assigned: assigned.length,
@@ -55,7 +56,19 @@ export function reportRows(members, tasks, time, accounts, calls) {
 }
 
 export function mountReport(
-  { project, data, db, result, modal, notify, session, refresh, escape },
+  {
+    project,
+    data,
+    db,
+    result,
+    rpc,
+    modal,
+    notify,
+    session,
+    refresh,
+    escape,
+    leader,
+  },
   root,
 ) {
   const actions =
@@ -86,13 +99,11 @@ export function mountReport(
       '<p>Time entries are visible to your project team.</p><label>Work date<input name="work_day" type="date" required></label><label>Minutes worked<input name="minutes" type="number" min="1" max="1440" required></label>',
       (f) =>
         result(
-          db
-            .from("studio_work_log")
-            .insert({
-              project_id: project.id,
-              work_day: f.get("work_day"),
-              minutes: Number(f.get("minutes")),
-            }),
+          db.from("studio_work_log").insert({
+            project_id: project.id,
+            work_day: f.get("work_day"),
+            minutes: Number(f.get("minutes")),
+          }),
         ),
       refresh,
     ),
@@ -121,11 +132,44 @@ export function mountReport(
         )
       : [],
     projectRows("ai_runs", "user_id,ok"),
+    result(
+      db
+        .from("studio_reports")
+        .select("closed_at,snapshot")
+        .eq("project_id", project.id)
+        .maybeSingle(),
+    ),
+    project.repository
+      ? fetch("/api/activity?project=" + encodeURIComponent(project.id), {
+          headers: { authorization: "Bearer " + session.access_token },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)
+      : null,
   ])
-    .then(([time, accounts, calls]) => {
+    .then(([time, accounts, calls, snapshot, activity]) => {
       if (!root.isConnected) return;
-      const rows = reportRows(data.members, data.tasks, time, accounts, calls);
-      const completed = data.tasks.filter((t) => t.status === "done").length;
+      const live = reportRows(data.members, data.tasks, time, accounts, calls);
+      const rows = Array.isArray(snapshot?.snapshot)
+        ? snapshot.snapshot.map((row) => ({
+            ...row,
+            sharedUsage:
+              live.find((r) => r.id === row.id)?.sharedUsage ||
+              "No usage shared",
+          }))
+        : live;
+      for (const row of rows) {
+        const recent = activity?.contributors?.find(
+          (c) => c.login.toLowerCase() === row.name.toLowerCase(),
+        );
+        row.commits = recent?.commits ?? "—";
+      }
+      const totalTasks = snapshot
+        ? rows.reduce((sum, r) => sum + r.assigned, 0)
+        : data.tasks.length;
+      const completed = snapshot
+        ? rows.reduce((sum, r) => sum + r.completed, 0)
+        : data.tasks.filter((t) => t.status === "done").length;
       const totalHours = rows.reduce((n, r) => n + r.hours, 0).toFixed(1);
       const finished =
         project.submission_deadline &&
@@ -135,11 +179,11 @@ export function mountReport(
         '<div class="studio-metrics"><div><small>Completed tasks</small><strong>' +
         completed +
         " / " +
-        data.tasks.length +
+        totalTasks +
         "</strong></div><div><small>Logged hours</small><strong>" +
         totalHours +
         "</strong></div><div><small>Reporting period</small><strong>" +
-        (finished ? "After deadline" : "In progress") +
+        (snapshot ? "Closed" : finished ? "After deadline" : "In progress") +
         "</strong></div></div>" +
         '<div class="studio-table-wrap" tabindex="0" aria-label="Member contributions"><table class="studio-table"><thead><tr>' +
         [
@@ -147,6 +191,7 @@ export function mountReport(
           "Delivery",
           "On time / late",
           "Logged",
+          "Recent commits",
           "Studio AI",
           "Shared account usage",
         ]
@@ -179,6 +224,8 @@ export function mountReport(
               "</td><td>" +
               r.hours +
               " h</td><td>" +
+              r.commits +
+              "</td><td>" +
               r.studioCalls +
               "</td><td>" +
               escape(r.sharedUsage) +
@@ -186,13 +233,29 @@ export function mountReport(
           )
           .join("") +
         "</tbody></table></div>" +
-        '<p class="shared-muted">On-time results use dated completions and UTC calendar dates. Studio AI counts successful assistance calls. Shared account usage is self-reported. Totals include recorded usage windows.</p>' +
+        '<p class="shared-muted">On-time results use dated completions and UTC calendar dates. Studio AI counts successful assistance calls. Commit counts use the recent GitHub feed and matching names. Shared account totals reflect current consent and recorded usage windows.</p>' +
         (rows.some(
           (r) =>
             r.name === data.members.find((m) => m.user_id === uid)?.full_name,
         )
           ? '<button type="button" class="button subtle" id="report-portfolio">Add my contribution to portfolio</button>'
           : "");
+      if (leader && !snapshot) {
+        root
+          .querySelector("#studio-report-content")
+          .insertAdjacentHTML(
+            "beforeend",
+            '<button type="button" class="button subtle" id="report-close">Close hackathon report</button>',
+          );
+        bind("report-close", () =>
+          modal(
+            "Close hackathon report",
+            "<p>Save a final copy of delivery, logged time and Studio AI totals. This also records a private project-history entry for each teammate.</p>",
+            () => rpc("close_studio_report", { p_project: project.id }),
+            refresh,
+          ),
+        );
+      }
       for (const id of ["report-export", "report-share"])
         root.querySelector("#" + id).disabled = false;
       bind("report-export", () => {
@@ -267,13 +330,11 @@ export function mountReport(
             "</textarea></label>",
           async (f) => {
             await result(
-              db
-                .from("project_messages")
-                .insert({
-                  project_id: project.id,
-                  kind: "text",
-                  body: f.get("message"),
-                }),
+              db.from("project_messages").insert({
+                project_id: project.id,
+                kind: "text",
+                body: f.get("message"),
+              }),
             );
             notify("Report posted to the team channel.");
           },
@@ -299,19 +360,17 @@ export function mountReport(
               "</textarea></label>",
             async (f) => {
               await result(
-                db
-                  .from("portfolio_entries")
-                  .insert({
-                    user_id: uid,
-                    title: f.get("title"),
-                    subtitle: mine.role.slice(0, 160),
-                    contribution: f.get("contribution"),
-                    outcome:
-                      mine.completed +
-                      " completed tasks · " +
-                      mine.hours +
-                      " logged hours",
-                  }),
+                db.from("portfolio_entries").insert({
+                  user_id: uid,
+                  title: f.get("title"),
+                  subtitle: mine.role.slice(0, 160),
+                  contribution: f.get("contribution"),
+                  outcome:
+                    mine.completed +
+                    " completed tasks · " +
+                    mine.hours +
+                    " logged hours",
+                }),
               );
               notify("Contribution added to your portfolio.");
             },

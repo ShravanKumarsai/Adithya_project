@@ -1,10 +1,10 @@
+import {applyStudioAppearance,studioAppearance} from "./studio-appearance.js";
 import {mountReport} from "./studio-report.js";
 import {mountBlueprint} from "./blueprint.js";
 import {studioSkills} from "./assist-contract.js";
 import { insightsView } from "./project-insights.js";
 import { openRulebookImport } from "./shared-rulebook.js";
 import { notifications } from "./shared-notifications.js";
-import { renderPlanning } from "./shared-planning.js";
 import { renderPortfolio } from "./shared-portfolio.js";
 import { supabase as db } from "./lib/supabase.js";
 
@@ -13,11 +13,11 @@ const themeButton=document.querySelector("#blueprint-theme");
 const themes=["dark","light","blueprint"];
 const nextTheme=theme=>themes[(themes.indexOf(theme)+1)%themes.length];
 function setTheme(theme){
-  document.documentElement.dataset.blueprint=theme;
-  themeButton.textContent="Use "+nextTheme(theme)+" theme";
+  applyStudioAppearance({...studioAppearance(),theme});
+  themeButton.textContent="Use "+(nextTheme(theme)==="dark"?"Midnight":nextTheme(theme))+" theme";
 }
-const savedTheme=localStorage.getItem("aithya.theme");
-setTheme(themes.includes(savedTheme)?savedTheme:"dark");
+applyStudioAppearance();
+setTheme(studioAppearance().theme);
 themeButton.onclick=()=>{
   const theme=nextTheme(document.documentElement.dataset.blueprint);
   setTheme(theme);
@@ -919,58 +919,43 @@ const memberName = (id) =>
   data.members.find((m) => m.user_id === id)?.full_name || "Unassigned";
 function renderProject() {
   detachSheet();
-  const groups = {
-    Workspace:["Overview","My dashboard","Board","Timeline"],
-    Teamwork:["Chats","Team","Learning"],
-    Project:["Project setup","Planning","Files","Activity","Submission","Report"],
-    Studio:["AI mentor","AI credits","Portfolio","Memory","History","Settings"],
-  };
-  const gated = new Set(["My dashboard","Direct chats","AI credits","Settings"]);
-  if(!data.personalReady)for(const group of Object.keys(groups))groups[group]=groups[group].filter(t=>!gated.has(t));
-  const tabs=Object.values(groups).flat();
+  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings"];
+  const tabs=data.personalReady?labels:labels.filter(t=>!["My dashboard","AI credits","Register","Settings"].includes(t));
   if(!tabs.includes(tab))tab="Overview";
-  const viewAliases={"Project setup":"Setup",Chats:"Chat","AI mentor":"Mentor","Submission":"Ship"};
+  const viewAliases={"Project setup":"Setup",Chats:"Chat","AI mentor":"Mentor","Ship check":"Ship","Planning board":"Planning"};
   const view=viewAliases[tab]||tab;
-  const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view]||"Build";
-  main.innerHTML =
-    '<header class="shared-header project-masthead"><div><p class="compact-info">' +
-    escape(project.hackathon_name || "Shared project") +
-    "</p><h1>" +
-    escape(project.name) +
-    '</h1></div><div class="shared-actions">' +
-    button("back-projects", "Shared projects") +
-    button("refresh-shared", "Refresh") +
-    '</div></header><div class="bp-titleblock"><div class="bp-steps">'+["Idea","Plan","Team","Build","Learn","Ship"].map(x=>'<span'+(stage===x?' aria-current="step"':'')+'>'+x+'</span>').join('')+'</div><small>Due '+escape(project.submission_deadline||"unscheduled")+'</small></div><div class="bp-layout"><nav class="shared-tabs" aria-label="Project sheets">' +
-    Object.entries(groups).map(([group,sheets])=>'<div class="v3-nav-group"><p>'+group+'</p>'+
-      sheets.map(t=>'<button type="button" aria-current="'+(tab===t?"page":"false")+'" id="tab-'+(viewAliases[t]||t.replaceAll(" ","-"))+'"><span>'+
-        String(tabs.indexOf(t)+1).padStart(2,"0")+'</span>'+escape(t)+'</button>').join("")+'</div>').join("") +
-    '</nav><div id="shared-content" class="shared-content"></div></div>';
+  const stageSheets={Idea:"Project setup",Plan:"Planning board",Team:"Team",Build:"Board",Learn:"Learning",Ship:"Ship check"};
+  const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view];
+  const days=project.submission_deadline?Math.max(0,Math.ceil((Date.parse(project.submission_deadline+"T23:59:59")-Date.now())/86400000)):null;
+  const icons=["M2 2h5v5H2zm9 0h5v5h-5zM2 11h5v5H2zm9 0h5v5h-5z","M9 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-6 7c0-5 12-5 12 0","M9 2v14M2 9h14M4 4l10 10m0-10L4 14","M2 3h14v10H7l-5 3z","M2 3h14v12H2zm5 0v12m4-12v12","M9 2v14M2 9h14","M4 4v10m0-5 10-5m-10 10 10-5","M2 13a7 7 0 0 1 14 0M9 12l4-4","M5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-4 7c0-5 8-5 8 0M11 4c5-1 6 4 2 5m-1 2c3 0 5 2 5 5","M9 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 3v4l3 2","M2 3h6l1 2 1-2h6v11h-6l-1 2-1-2H2z","M3 15l1-4 9-9 3 3-9 9z","M9 1v16M1 9h16M3 3l12 12m0-12L3 15","M2 9l5 5 9-11","M2 3h14v13H2zm3 9V8m4 4V6m4 6V9","M2 5h14v11H2zm4 0V2h6v3","M9 2v14M2 9h14","M9 1v4m0 8v4M1 9h4m8 0h4M9 5a4 4 0 1 0 .01 0z"];
+  const icon=t=>'<svg class="studio-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="'+icons[labels.indexOf(t)]+'"/></svg>';
+  main.innerHTML='<div class="bp-layout final-layout"><nav class="shared-tabs" aria-label="Project sheets"><a class="studio-rail-brand" href="/shared">✳ AITHYA</a>'+
+    tabs.map(t=>'<button type="button" aria-current="'+(tab===t?"page":"false")+'" id="tab-'+(viewAliases[t]||t.replaceAll(" ","-"))+'">'+icon(t)+escape(t)+'</button>').join("")+
+    '<div class="studio-rail-account"><small>Signed in as</small><strong>'+escape(memberName(session.user.id))+'</strong></div></nav><div class="studio-project-body">'+
+    '<header class="project-masthead studio-title-block"><div><h1>'+escape(project.name)+'</h1><p>'+escape([project.hackathon_name||project.theme,days!==null?days+" days left":""].filter(Boolean).join(" · "))+'</p></div>'+
+    '<nav class="bp-steps" aria-label="Project stages">'+Object.keys(stageSheets).map(name=>'<button type="button" id="stage-'+name+'"'+(stage===name?' aria-current="step"':'')+'>'+name+'</button>').join('')+'</nav><div class="studio-project-due"><small>Due</small><strong>'+escape(project.submission_deadline||"Unscheduled")+'</strong></div></header>'+
+    '<div id="shared-content" class="shared-content"></div></div></div>';
   bind("back-projects", () => { location.href = "/shared"; });
   bind("refresh-shared", loadProject);
+  for(const [name,sheet] of Object.entries(stageSheets)){
+    bind("stage-"+name,()=>{
+      tab=sheet;
+      renderProject();
+      document.getElementById("stage-"+name)?.focus();
+    });
+  }
   for (const t of tabs)
     bind("tab-" + (viewAliases[t]||t.replaceAll(" ","-")), () => {
-      if(t==="Portfolio"){document.getElementById("portfolio-nav").click();return}
       tab = t;
       renderProject();
     });
   ({
     Overview: overviewView,
-    Report:()=>mountReport({project,data,db,result,modal,notify,session,refresh:loadProject,escape},document.getElementById("shared-content")),
+    Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,escape,leader:leader()},document.getElementById("shared-content")),
     Setup: requirementsView,
     Team: teamView,
     Board: tasksView,
-    Planning: () =>
-      renderPlanning({
-        db,
-        project,
-        leader: leader(),
-        ai: data.ai,
-        escape,
-        when,
-        result,
-        notify,
-        editPolicy: editAiPolicy,
-      }),
+    Portfolio:()=>renderPortfolio({db,main:document.getElementById("shared-content"),user:session.user,result,escape,button,field,area,select,bind,modal,notify,back:()=>{tab="Overview";renderProject()}}),
     Learning: learningView,
     Files: filesView,
     Activity: activityView,

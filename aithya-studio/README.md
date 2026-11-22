@@ -63,7 +63,7 @@ The shared workspace groups project sheets into Workspace, Teamwork, Project and
 
 Apply `20261122153000_studio_personal_workspaces.sql` after the blueprint migration to enable personal dashboards, participant-only direct chats, project profiles, opt-in AI credit tracking and integration settings. The project pages detect whether this migration is available. Project leads manage encrypted Gemini and Vercel keys in Settings. Public GitHub repositories remain available through Activity.
 
-The existing `/api/assist` route reads project data with the caller's Supabase permissions. Setup drafts and self-profile analysis use the configured platform Gemini key when the project AI policy allows it. Regular assistance uses the project's encrypted Gemini key. Direct chat summaries require explicit consent and participant access. AI credit tracking uses manually entered allowances and reset windows.
+The existing `/api/assist` route reads project data with the caller's Supabase permissions. Setup drafts and self-profile analysis use the configured platform Gemini key when the project AI policy allows it. Regular assistance uses the project's encrypted Gemini key. Private chats and attachments stay out of assistant requests. AI credit tracking uses manually entered allowances and reset windows.
 
 Run `tests/personal-workspaces-access.sql` against an isolated test schema to exercise private threads and shared credits. The test transaction rolls back its records.
 
@@ -74,3 +74,11 @@ The Chats sheet opens the team channel and private threads from the same inbox. 
 The Report sheet computes a project summary from accepted members, tasks, completion timestamps, time entries, successful Studio assistance calls and explicitly shared AI usage windows. Export or share the generated report, or turn your own contribution into a portfolio case study. Usage from external AI accounts comes from member-entered values. Earlier completed tasks without a timestamp have unknown punctuality.
 
 The production migrations follow the blueprint and personal workspace migrations in date order. Run `tests/clean-workspace-access.sql` against a database with those migrations to exercise completion timestamps and privacy. Portfolio appearance preferences are stored in the local browser and applied to downloaded HTML.
+
+## Final blueprint workflow
+
+The project rail follows the final 18-sheet order. Blueprint, Light and Midnight support a shared accent and icon-size preference under Portfolio. The detective planning board keeps its own palette, renders dependency strings and stores each member's own study notes.
+
+The final-workflows migration adds team stand-ups, private study notes, timeline proposal approval, and immutable close snapshots with private portfolio history. The companion GitHub token migration adds encrypted repository credentials in the server-only runtime schema. The same authenticated /api/assist route handles Quick add, case-file explanations, task ideas, daily digests, stand-up merges and report notes. The project policy controls AI access and all draft workflows have Basic results. There are no new environment secrets.
+
+Run `tests/final-workspace-access.sql` after the earlier collaboration checks. It uses a rolled-back transaction to exercise study-note privacy, pin authorization, recipient-only proposal decisions, retry safety and leader-only report close.
