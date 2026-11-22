@@ -22,14 +22,31 @@ async function scanRulebook(file, mime) {
     throw Error("Choose a file up to 8 MB for Gemini scanning.");
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw Error("Sign in again to scan this file.");
-  const response = await fetch("/api/setup/rulebook", {
-    method: "POST",
-    headers: {
-      "content-type": mime,
-      authorization: "Bearer " + data.session.access_token,
-    },
-    body: file,
-  });
+  const headers = {
+    "content-type": mime,
+    authorization: "Bearer " + data.session.access_token,
+  };
+  let url = "/api/setup/rulebook";
+  let body = file;
+  if (file.size > 4 * 1024 * 1024) {
+    const chunkSize = 3 * 1024 * 1024;
+    const scanId = crypto.randomUUID();
+    const parts = Math.ceil(file.size / chunkSize);
+    for (let part = 0; part < parts; part++) {
+      const response = await fetch(url + "/part?scan=" + scanId + "&part=" + part, {
+        method: "POST", headers,
+        body: file.slice(part * chunkSize, (part + 1) * chunkSize, mime),
+      });
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}));
+        throw Error(failure.error || "The rulebook upload failed. Try again.");
+      }
+    }
+    url += "?scan=" + scanId + "&parts=" + parts;
+    body = "";
+  }
+  const response = await fetch(url, {method:"POST", headers, body});
+  if (response.status === 413) throw Error("The file exceeds the upload limit for this deployment.");
   const payload = await response.json();
   if (!response.ok)
     throw Error(payload.error || "Gemini couldn’t read this file.");
@@ -53,7 +70,9 @@ export function openRulebookImport({ dialog, draft, escape, onApply }) {
   const review = body.querySelector("#rulebook-review");
   const status = body.querySelector("#rulebook-status");
   const scanDetail = body.querySelector("#rulebook-scan-detail");
-  fetch("/api/setup/rulebook").then(async response => {
+  supabase.auth.getSession().then(({data}) => fetch("/api/setup/rulebook", {
+    headers: data.session ? {authorization: "Bearer " + data.session.access_token} : {},
+  })).then(async response => {
     if (response.ok && !(await response.json()).configured && scanDetail.isConnected) {
       scanDetail.textContent = "Scanning requires the site’s Gemini setup key. Text and text-based PDFs can still be imported in your browser.";
     }

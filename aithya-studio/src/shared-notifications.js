@@ -13,6 +13,7 @@ export function notifications({
   const count = document.getElementById("notification-count");
   const list = document.getElementById("notification-list");
   const names = {
+    "chat.mention":"You were mentioned in team chat", "chat.proposal":"A teammate proposed a task for you","milestone.overdue":"Milestone overdue",
     "projects.insert": "Project created",
     "projects.update": "Project brief or status updated",
     "project_members.insert": "Teammate added",

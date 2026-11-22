@@ -110,12 +110,33 @@ function projectKeyCipher(projectId, nonce) {
   };
 }
 
-async function projectGeminiKey(env, projectId, vercel = false) {
-  return env.DB.prepare(
-    vercel ? "SELECT nonce,ciphertext FROM project_vercel_tokens WHERE project_id=?" : "SELECT nonce,ciphertext FROM project_gemini_keys WHERE project_id=?",
-  )
-    .bind(projectId)
-    .first();
+function integrationTable(provider) {
+  if(provider===true||provider==="vercel")return "project_vercel_tokens";
+  return provider==="github"?"project_github_tokens":"project_gemini_keys";
+}
+
+async function projectGeminiKey(env, projectId, provider) {
+  return env.DB.prepare("SELECT nonce,ciphertext FROM "+integrationTable(provider)+" WHERE project_id=?").bind(projectId).first();
+}
+
+async function revealIntegration(env,projectId,provider,stored) {
+  const namespace=provider==="gemini"?projectId:provider+":"+projectId;
+  return new TextDecoder().decode(await crypto.subtle.decrypt(
+    projectKeyCipher(namespace,decodeBytes(stored.nonce)),await encryptionKey(env),decodeBytes(stored.ciphertext)
+  ));
+}
+
+async function testIntegration(provider, key, project) {
+  if(provider==="github") {
+    if(!isRepo(project.repository))return false;
+    return Boolean(await github({GITHUB_TOKEN:key},"/repos/"+project.repository.split("/").map(encodeURIComponent).join("/")).catch(()=>null));
+  }
+  if(provider==="vercel") {
+    if(!vercelPattern.test(project.vercel_project_id||""))return false;
+    const query=project.vercel_team_id?"?teamId="+encodeURIComponent(project.vercel_team_id):"";
+    return (await timedFetch("https://api.vercel.com/v9/projects/"+project.vercel_project_id+query,{headers:{authorization:"Bearer "+key}})).ok;
+  }
+  return (await timedFetch("https://generativelanguage.googleapis.com/v1beta/models?"+new URLSearchParams({pageSize:"1"}),{headers:{"x-goog-api-key":key}})).ok;
 }
 
 async function planningAccess(request, projectId) {
@@ -136,7 +157,7 @@ async function planningAccess(request, projectId) {
   const response = await get(
     "/rest/v1/projects?id=eq." +
       projectId +
-      "&select=leader_id,archived_at,name,problem_statement,submission_deadline,expected_deliverables,technology_stack",
+      "&select=leader_id,archived_at,name,problem_statement,submission_deadline,expected_deliverables,technology_stack,repository,vercel_project_id,vercel_team_id",
   );
   if (!response.ok)
     return { error: json({ error: "Could not load the project." }, 502) };
@@ -159,8 +180,10 @@ async function planningAccess(request, projectId) {
   return { project, get };
 }
 
-async function projectGeminiKeyResponse(request, env, url, vercel = false) {
-  const table = vercel ? "project_vercel_tokens" : "project_gemini_keys";
+async function projectGeminiKeyResponse(request, env, url, integration = "gemini") {
+  const provider=integration===true?"vercel":integration;
+  const vercel=provider==="vercel";
+  const table = integrationTable(provider);
   const projectId = url.searchParams.get("projectId")?.toLowerCase() || "";
   if (!uuidPattern.test(projectId))
     return json({ error: "Choose a project." }, 400);
@@ -176,9 +199,18 @@ async function projectGeminiKeyResponse(request, env, url, vercel = false) {
     const access = await planningAccess(request, projectId);
     if (access.error) return access.error;
     if (request.method === "GET") {
+      const stored=await projectGeminiKey(env,projectId,provider);
+      if(url.searchParams.get("test")==="1"){
+        if(!stored)return json({error:"Save a project key first."},422);
+        const key=await revealIntegration(env,projectId,provider,stored);
+        if(!await testIntegration(provider,key,access.project))return json({error:"Connection failed. Check the key and project settings."},422);
+        return json({connected:true,configured:true});
+      }
+      const meter=provider==="gemini"?await env.DB.prepare("SELECT attempts FROM planning_rate WHERE account_id=? AND day=?").bind("assist-project:"+projectId,new Date().toISOString().slice(0,10)).first():null;
       return json({
-        configured: Boolean(await projectGeminiKey(env, projectId, vercel)),
-        templates: vercel ? undefined : planningTemplates.map(({ id, name, description }) => ({
+        configured: Boolean(stored),
+        remaining:provider==="gemini"?Math.max(0,50-Number(meter?.attempts||0)):undefined,
+        templates: provider!=="gemini" ? undefined : planningTemplates.map(({ id, name, description }) => ({
           id,
           name,
           description,
@@ -201,12 +233,12 @@ async function projectGeminiKeyResponse(request, env, url, vercel = false) {
     } catch {
       return json({ error: "Invalid key format." }, 400);
     }
-    if (typeof key !== "string" || !(vercel ? /^[!-~]{12,256}$/ : /^[a-zA-Z0-9_.-]{15,256}$/).test(key)) {
-      return json({ error: vercel ? "Enter a valid Vercel access token." : "Check the format of your Gemini API key." }, 400);
+    if (typeof key !== "string" || !(provider!=="gemini" ? /^[A-Za-z0-9_.-]{12,256}$/ : /^[a-zA-Z0-9_.-]{15,256}$/).test(key)) {
+      return json({ error: provider!=="gemini" ? "Enter a valid access token." : "Check the format of your Gemini API key." }, 400);
     }
     const nonce = crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await crypto.subtle.encrypt(
-      projectKeyCipher(vercel ? "vercel:" + projectId : projectId, nonce),
+      projectKeyCipher(provider==="gemini"?projectId:provider+":"+projectId, nonce),
       await encryptionKey(env),
       new TextEncoder().encode(key),
     );

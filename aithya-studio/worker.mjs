@@ -57,8 +57,7 @@ async function deployment(env, path, vercel, team, latest, token) {
     if (team) scope.set('teamId', team);
     const query = new URLSearchParams(scope);
     query.set('projectId', vercel);
-    query.set('target', 'production');
-    query.set('limit', '1');
+    query.set('limit', '10');
     const get = route => timedFetch('https://api.vercel.com' + route, {
       headers:{Authorization:'Bearer ' + token}
     });
@@ -70,7 +69,8 @@ async function deployment(env, path, vercel, team, latest, token) {
       note:'Check the project ID, team ID and token access in your project connections.'};
     const project = await projectResponse.json();
     const production = project.targets?.production;
-    const row = (await latestResponse.json()).deployments?.[0];
+    const rows=(await latestResponse.json()).deployments||[];
+    const row=rows.find(row=>row.target==="production");
     const info = row ? deploymentInfo(row.readyState || row.state, row.meta?.githubCommitSha || row.gitSource?.sha,
       null, 'Vercel', latest, row.inspectorUrl) : {status:'No production deployment',source:'Vercel'};
     if (production?.readyState === 'READY') {
@@ -79,6 +79,11 @@ async function deployment(env, path, vercel, team, latest, token) {
       const host = hosts.find(h => !h.endsWith('.vercel.app')) || hosts[0];
       if (host) info.url = 'https://' + host;
     }
+    info.history=rows.slice(0,8).map(entry=>({
+      ...deploymentInfo(entry.readyState||entry.state,entry.meta?.githubCommitSha||entry.gitSource?.sha,
+        entry.url&&/^[-.a-z0-9]+$/i.test(entry.url)?"https://"+entry.url:null,"Vercel",latest,entry.inspectorUrl),
+      target:entry.target||"preview",date:entry.createdAt,author:truncate(entry.creator?.username,80)
+    }));
     return info;
   }
   if (!path) return {status:'Awaiting connection',source:'Vercel', note:'Add a Vercel project ID and access token in Activity.'};
@@ -162,6 +167,7 @@ async function activity(env, repository, vercel, team, overview, token) {
   const deploymentRequest = deployment(env, isRepo(repository) ? path : null, vercel, team, rows[0]?.sha, token).catch(() => ({
     status:'Unavailable', source:'Deployment provider', note:'Deployment status could not be fetched. GitHub activity is shown independently.'
   }));
+  const pullRequest = repo ? github(env,path+'/pulls','?state=all&sort=updated&direction=desc&per_page=50').catch(()=>null) : null;
   const commits = await Promise.all(rows.filter(row => shaPattern.test(row.sha)).map(async row => {
     const info = overview ? null : await github(env,path + '/commits/' + row.sha,'?per_page=30').catch(() => null);
     return {sha:row.sha,message:truncate(row.commit?.message,420),date:row.commit?.committer?.date,
@@ -171,7 +177,12 @@ async function activity(env, repository, vercel, team, overview, token) {
         patch:/(^|\/)(\.env(?:\.|$)|[^/]*\.(pem|key)$)/i.test(file.filename) ? '' : truncate(file.patch,1250)
       })), detailsAvailable:Boolean(info)};
   }));
-  return {repository:repo?.full_name || repository,branch:repo?.default_branch,githubNote,commits,deployment:await deploymentRequest,updatedAt:new Date().toISOString()};
+  const pulls=await pullRequest;
+  const contributions=new Map();
+  function contributor(login){if(!contributions.has(login))contributions.set(login,{login,commits:0,pulls:0});return contributions.get(login)}
+  rows.forEach(c=>contributor(c.author?.login||c.commit?.author?.name||"Unknown").commits++);
+  pulls?.forEach(pr=>contributor(pr.user?.login||"Unknown").pulls++);
+  return {contributors:[...contributions.values()],pullsAvailable:Array.isArray(pulls),repository:repo?.full_name || repository,branch:repo?.default_branch,githubNote,commits,deployment:await deploymentRequest,updatedAt:new Date().toISOString()};
 }
 
 function authorized(headers) {
@@ -185,6 +196,7 @@ function authorized(headers) {
   return {id,email,name:name || email.split('@')[0] || 'Member'};
 }
 
+/* assist API */
 /* notebook API */
 /* planning API */
 /* setup scanner API */
@@ -196,8 +208,10 @@ export default {
       if (url.pathname.startsWith('/api/')) return json({error:'Sign in to view your workspace.'},401);
       return new Response('<!doctype html><title>Aithya Studio</title><main style="font:20px system-ui;padding:3rem"><h1>Aithya Studio</h1><p><a href="/signin-with-chatgpt?return_to=/">Sign in to your workspace</a></p></main>',{status:401,headers:{...responseHeaders,'content-type':'text/html; charset=utf-8'}});
     }
+    if (url.pathname === '/api/assist') return studioAssist(request,env,url,user);
     if (url.pathname === '/api/setup/rulebook') return setupRulebookResponse(request,env,url,user);
     if (url.pathname === '/api/planning') return planningResponse(request,env,url,user);
+    if (url.pathname === '/api/github/token') return projectGeminiKeyResponse(request,env,url,'github');
     if (url.pathname === '/api/vercel/token') return projectGeminiKeyResponse(request,env,url,true);
     if (url.pathname === '/api/planning/key') return projectGeminiKeyResponse(request,env,url);
     if (['/api/notebook','/api/documents'].includes(url.pathname)) return notebook(request,env,user,url);
@@ -251,14 +265,15 @@ export default {
       const overview = false;
       let key;
       try {
+        const githubStored = repo && await projectGeminiKey(env,id.toLowerCase(),"github").catch(error=>{if(error.code==="42P01")return null;throw error});
         const stored = vercel && await projectGeminiKey(env, id.toLowerCase(), true);
-        key = JSON.stringify([id,repo,vercel,team,stored?.nonce]);
+        key = JSON.stringify([id,repo,vercel,team,stored?.nonce,githubStored?.nonce]);
         let entry = cache.get(key);
         if (!entry || Date.now() - entry.time > 25000) {
           const token = stored ? new TextDecoder().decode(await crypto.subtle.decrypt(
             projectKeyCipher('vercel:' + id.toLowerCase(), decodeBytes(stored.nonce)), await encryptionKey(env), decodeBytes(stored.ciphertext)
           )) : env.VERCEL_TOKEN;
-          entry = {time:Date.now(), promise:activity(env,repo || '',vercel,team,overview,token)};
+          entry = {time:Date.now(), promise:activity({...env,GITHUB_TOKEN:githubStored?await revealIntegration(env,id.toLowerCase(),'github',githubStored):env.GITHUB_TOKEN},repo || '',vercel,team,overview,token)};
           keep(cache,key,entry);
         }
         const data = await entry.promise;

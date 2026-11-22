@@ -1,0 +1,40 @@
+{
+  "framework": null,
+  "buildCommand": "npm run build && node vercel-build.mjs",
+  "outputDirectory": "public-vercel",
+  "functions": {
+    "api/studio.mjs": {
+      "includeFiles": "dist/server/index.js",
+      "maxDuration": 90
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/shared",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/api/:route*",
+      "destination": "/api/studio?studioRoute=:route*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; connect-src 'self' https://ekqfotmlnqqrbcizjtfz.supabase.co wss://ekqfotmlnqqrbcizjtfz.supabase.co; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'self'"
+        }
+      ]
+    }
+  ]
+}

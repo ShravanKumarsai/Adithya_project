@@ -1,3 +1,5 @@
+import {mountBlueprint} from "./blueprint.js";
+import {studioSkills} from "./assist-contract.js";
 import { insightsView } from "./project-insights.js";
 import { openRulebookImport } from "./shared-rulebook.js";
 import { notifications } from "./shared-notifications.js";
@@ -5,6 +7,14 @@ import { renderPlanning } from "./shared-planning.js";
 import { renderPortfolio } from "./shared-portfolio.js";
 import { supabase as db } from "./lib/supabase.js";
 
+let detachSheet=()=>{};
+const themeButton=document.querySelector("#blueprint-theme");
+function setTheme(light){
+  document.documentElement.dataset.blueprint=light?"light":"dark";
+  themeButton.textContent=light?"Use dark theme":"Use light theme";
+}
+setTheme(localStorage.getItem("aithya.theme")==="light");
+themeButton.onclick=()=>{const light=document.documentElement.dataset.blueprint!=="light";setTheme(light);localStorage.setItem("aithya.theme",light?"light":"dark")};
 const main = document.getElementById("shared-main");
 const dialog = document.getElementById("shared-dialog");
 const escape = (value) =>
@@ -272,6 +282,7 @@ function authScreen() {
   };
 }
 async function workspace() {
+  detachSheet();
   const version = ++generation;
   project = null;
   wizard = null;
@@ -291,6 +302,7 @@ async function workspace() {
         return;
       }
     }
+    detachSheet();
     generation++;
     project = null;
     wizard = null;
@@ -796,6 +808,7 @@ async function loadProject() {
   main.innerHTML = empty("Loading project records…");
   try {
     const queries = [
+      ["milestones", db.from("milestones").select("*").eq("project_id", id).order("due")],
       ["project", db.from("projects").select("*").eq("id", id).single()],
       [
         "members",
@@ -877,11 +890,12 @@ async function loadProject() {
           .eq("project_id", id)
           .order("created_at", { ascending: false }),
       ]);
-    const entries = await Promise.all(
-      queries.map(async ([key, query]) => [key, await result(query)]),
-    );
+    const [entries,schemaProbe]=await Promise.all([
+      Promise.all(queries.map(async ([key,query])=>[key,await result(query)])),
+      db.from("studio_member_details").select("project_id").eq("project_id",id).limit(1)
+    ]);
     if (version !== generation) return;
-    data = Object.fromEntries(entries);
+    data = {...Object.fromEntries(entries), personalReady:!schemaProbe.error};
     project = data.project;
     renderProject();
   } catch (err) {
@@ -896,17 +910,20 @@ const leader = () => project?.leader_id === session?.user.id;
 const memberName = (id) =>
   data.members.find((m) => m.user_id === id)?.full_name || "Unassigned";
 function renderProject() {
-  const tabs = [
-    "Overview",
-    "Requirements",
-    "Team",
-    "Tasks",
-    "Planning",
-    "Learning",
-    "Files",
-    "Activity",
-    "History",
-  ];
+  detachSheet();
+  const groups = {
+    Workspace:["Overview","My dashboard","Board","Timeline"],
+    Teamwork:["Team chat","Direct chats","Team","Learning"],
+    Project:["Project setup","Planning","Files","Activity","Submission"],
+    Studio:["AI mentor","AI credits","Memory","History","Settings"],
+  };
+  const gated = new Set(["My dashboard","Direct chats","AI credits","Settings"]);
+  if(!data.personalReady)for(const group of Object.keys(groups))groups[group]=groups[group].filter(t=>!gated.has(t));
+  const tabs=Object.values(groups).flat();
+  if(!tabs.includes(tab))tab="Overview";
+  const viewAliases={"Project setup":"Setup","Team chat":"Chat","AI mentor":"Mentor","Submission":"Ship"};
+  const view=viewAliases[tab]||tab;
+  const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view]||"Build";
   main.innerHTML =
     '<header class="shared-header"><div><p class="compact-info">' +
     escape(project.hackathon_name || "Shared project") +
@@ -915,32 +932,23 @@ function renderProject() {
     '</h1></div><div class="shared-actions">' +
     button("back-projects", "Shared projects") +
     button("refresh-shared", "Refresh") +
-    '</div></header><nav class="shared-tabs" role="tablist">' +
-    tabs
-      .map(
-        (t) =>
-          '<button role="tab" aria-selected="' +
-          (t === tab) +
-          '" id="tab-' +
-          t +
-          '">' +
-          t +
-          "</button>",
-      )
-      .join("") +
-    '</nav><div id="shared-content" class="shared-content"></div>';
+    '</div></header><div class="bp-titleblock"><div class="bp-steps">'+["Idea","Plan","Team","Build","Learn","Ship"].map(x=>'<span'+(stage===x?' aria-current="step"':'')+'>'+x+'</span>').join('')+'</div><small>Sheet '+(tabs.indexOf(tab)+1)+' / '+tabs.length+' · Due '+escape(project.submission_deadline||"unscheduled")+' · Scale 1:1</small></div><div class="bp-layout"><nav class="shared-tabs" aria-label="Project sheets">' +
+    Object.entries(groups).map(([group,sheets])=>'<div class="v3-nav-group"><p>'+group+'</p>'+
+      sheets.map(t=>'<button type="button" aria-current="'+(tab===t?"page":"false")+'" id="tab-'+(viewAliases[t]||t.replaceAll(" ","-"))+'"><span>'+
+        String(tabs.indexOf(t)+1).padStart(2,"0")+'</span>'+escape(t)+'</button>').join("")+'</div>').join("") +
+    '</nav><div id="shared-content" class="shared-content"></div></div>';
   bind("back-projects", () => { location.href = "/shared"; });
   bind("refresh-shared", loadProject);
   for (const t of tabs)
-    bind("tab-" + t, () => {
+    bind("tab-" + (viewAliases[t]||t.replaceAll(" ","-")), () => {
       tab = t;
       renderProject();
     });
   ({
     Overview: overviewView,
-    Requirements: requirementsView,
+    Setup: requirementsView,
     Team: teamView,
-    Tasks: tasksView,
+    Board: tasksView,
     Planning: () =>
       renderPlanning({
         db,
@@ -957,7 +965,10 @@ function renderProject() {
     Files: filesView,
     Activity: activityView,
     History: historyView,
-  })[tab]();
+  })[view]?.();
+  const openSheet=next=>{tab=Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next;renderProject()};
+  detachSheet=mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editPolicy:editAiPolicy});
+
 }
 const content = (html) =>
   (document.getElementById("shared-content").innerHTML = html);
@@ -1093,7 +1104,9 @@ function deploymentPanel(deploy, repoUrl) {
     (deploy.url ? '<p>' + escape(new URL(deploy.url).hostname) + '</p>' : '<p>No published link available yet.</p>') +
     '<div class="shared-actions">' + links.join("") + '</div><p>Latest production deployment · <strong>' +
     escape(deploy.status) + '</strong></p>' +
-    (deploy.note || deploy.comparison ? '<p>' + escape(deploy.note || deploy.comparison) + '</p>' : '') + '</section>';
+    (deploy.note || deploy.comparison ? '<p>' + escape(deploy.note || deploy.comparison) + '</p>' : '') +
+    (deploy.history?.length?'<h3>Recent deployments</h3>'+deploy.history.map(row=>'<div class="shared-row"><div><b>'+escape(row.target+' · '+row.status)+'</b><p>'+escape([row.author,row.date?when(row.date):""].filter(Boolean).join(" · "))+'</p></div>'+
+    (row.statusUrl?resourceLink(row.statusUrl,"View details"):"")+'</div>').join(""):"")+'</section>';
 }
 
 async function vercelTokenSettings() {
@@ -1123,13 +1136,8 @@ async function vercelTokenSettings() {
     });
 }
 
-async function activityView() {
-  content('<header class="shared-header"><div><h2>GitHub &amp; Vercel</h2><p>' +
-    escape(project.repository || "Repository awaiting setup") + '</p></div>' +
-    (leader() ? '<div class="shared-actions">' + button("edit-connections", "Connections") + button("vercel-token", "Vercel token") + "</div>" : "") +
-    '</header><div id="project-feed" aria-live="polite"></div>');
-  bind("vercel-token", vercelTokenSettings);
-  bind("edit-connections", () => modal("Project connections",
+function editConnections() {
+  return modal("Project connections",
     field("repository","GitHub repository URL or owner/name", project.repository) +
     field("vercel_project_id","Vercel project ID (optional)", project.vercel_project_id) +
     field("vercel_team_id","Vercel team ID (optional)", project.vercel_team_id),
@@ -1141,7 +1149,16 @@ async function activityView() {
       if (vercel && !/^prj_[A-Za-z0-9]{8,64}$/.test(vercel)) throw Error("Enter a Vercel project ID beginning with prj_.");
       if (team && (!vercel || !/^team_[A-Za-z0-9]{8,64}$/.test(team))) throw Error("Enter a Vercel project ID and a team ID beginning with team_.");
       await result(db.from("projects").update({repository:repo,vercel_project_id:vercel,vercel_team_id:team}).eq("id",project.id).select("id").single());
-    }));
+    });
+}
+
+async function activityView() {
+  content('<header class="shared-header"><div><h2>GitHub &amp; Vercel</h2><p>' +
+    escape(project.repository || "Repository awaiting setup") + '</p></div>' +
+    (leader() ? '<div class="shared-actions">' + button("edit-connections", "Connections") + button("vercel-token", "Vercel token") + "</div>" : "") +
+    '</header><div id="project-feed" aria-live="polite"></div>');
+  bind("vercel-token", vercelTokenSettings);
+  bind("edit-connections", editConnections);
   const panel = document.getElementById("project-feed");
   const id = project.id;
   let refreshing = false;
@@ -1157,9 +1174,10 @@ async function activityView() {
       const deploy = feed.deployment;
       panel.innerHTML = '<div class="shared-columns">' + deploymentPanel(deploy, repoUrl) + '<section><h3>Recent commits</h3>' +
         (feed.commits.map(c => '<article class="shared-row"><div><a href="' + escape(repoUrl + "/commit/" + c.sha) + '" target="_blank" rel="noreferrer">' +
-          escape(c.message.split("\n")[0]) + '</a><p>' + escape(c.author) + " · " + escape(when(c.date)) + '</p></div></article>').join("") || empty(feed.githubNote || "No commits on the default branch.")) +
+          escape(c.message.split("\n")[0]) + '</a><p>' + escape(c.author) + " · " + escape(feed.branch || "") + " · " + escape(c.sha.slice(0,7)) + " · " + escape(when(c.date)) + '</p></div></article>').join("") || empty(feed.githubNote || "No commits on the default branch.")) +
         (feed.brief.length ? '<h3>What changed</h3><ul>' + feed.brief.map(item => '<li>' + escape(item.text) + '</li>').join("") + '</ul>' : '') +
-        '</section></div><p class="shared-muted">Updated ' + escape(when(feed.updatedAt)) + '</p>';
+        '</section></div><section class="bp-panel"><h3>Repository contributors</h3><p>Latest six commits · '+(feed.pullsAvailable?'up to 50 recently updated pull requests':'pull request data unavailable')+'</p>'+
+        (feed.contributors||[]).map(c=>'<div class="bp-bar"><span>'+escape(c.login)+'</span><progress value="'+c.commits+'" max="6"></progress><b>'+c.commits+' commits</b></div><div class="bp-bar"><span>Pull requests</span><progress value="'+c.pulls+'" max="50"></progress><b>'+c.pulls+' PRs</b></div>').join("")+'</section><p class="shared-muted">Updated '  + escape(when(feed.updatedAt)) + '</p>';
     } catch (error) {
       if (panel.isConnected) panel.innerHTML = errorBox(error);
     } finally {
@@ -1783,6 +1801,8 @@ function tasksView() {
           [["", "None"], ...data.requirements.map((r) => [r.id, r.title])],
           t?.requirement_id || "",
         ) +
+        select("skill","Skill",[["","Choose skill"],...studioSkills.map(s=>[s,s])],t?.skill||"") +
+        select("blocked_by","Waits on",[["","No dependency"],...data.tasks.filter(b=>b.id!==t?.id).map(b=>[b.id,b.title])],t?.blocked_by||"") +
         field("due_date", "Due date", t?.due_date, "date") +
         field(
           "estimated_hours",
@@ -1794,6 +1814,7 @@ function tasksView() {
         const values = {
           ...Object.fromEntries(form),
           project_id: project.id,
+          blocked_by: form.get("blocked_by") || null,
           owner_id: form.get("owner_id") || null,
           requirement_id: form.get("requirement_id") || null,
           due_date: form.get("due_date") || null,

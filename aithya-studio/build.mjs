@@ -81,11 +81,13 @@ const setupPrompt = JSON.parse(
 );
 const setupScanner = await readFile("setup-rulebook-api.mjs", "utf8");
 const notebookApi = await readFile("notebook-api.mjs", "utf8");
+const assistCode = (await readFile("src/assist-contract.js","utf8")).replaceAll("export ","") + "\n" + await readFile("assist-api.mjs","utf8");
 const worker = (await readFile("worker.mjs", "utf8"))
   .replace(
     "import { assets } from './assets.js';",
     () => "const assets = " + JSON.stringify(Object.fromEntries(entries)) + ";",
   )
+  .replace("/* assist API */", () => assistCode)
   .replace("/* notebook API */", () => notebookApi)
   .replace(
     "/* planning API */",

@@ -48,3 +48,21 @@ Portfolio profiles and case studies stay private to their Supabase owner. The ed
 ## Scanned rulebooks and photos
 
 Set `GEMINI_SETUP_API_KEY` as a secret on the Sites deployment to enable Gemini scanning from All Projects and Project setup. This credential is used solely by the setup rulebook route. The route accepts an explicitly selected PDF, JPEG, PNG, or WebP up to 8 MB and returns suggested setup details for review. Text and text-based PDFs can also be read locally. Existing project planning keeps using the encrypted per-project credential supplied by its leader.
+
+## Blueprint workspace on Vercel
+
+Run `npm ci`, `npm run build`, then `node vercel-build.mjs` from this directory. Vercel serves the sheets at /shared and routes authenticated /api requests to api/studio.mjs. Postgres storage requires AITHYA_DATABASE_URL with the aithya_vercel_app role. PROJECT_GEMINI_KEY_SECRET protects per-project tokens. GEMINI_SETUP_API_KEY is used only for rulebook import. The blueprint features require no additional provider secrets.
+
+The blueprint_sheets migration adds task skills and dependencies, milestones, evidence, messages, votes, private attachment metadata, an AI audit table, and member-scoped Realtime. Digests use UTC. A minute-by-minute pg_cron job posts scheduled summaries and records overdue milestones. Team chat downloads use authenticated Storage requests. Drafts from POST /api/assist use the project policy and encrypted team key. Basic drafts work offline from Gemini. Shared meeting notes entered in the Chat sheet can be submitted for summarization. Private learning goals and portfolios are excluded from AI input.
+
+The collaboration checks in tests/blueprint-access.sql run inside a rolled-back transaction with separate owner, member and outsider identities.
+
+## Night Studio and personal workspaces
+
+The shared workspace groups project sheets into Workspace, Teamwork, Project and Studio. The default Night Studio theme and the light theme both fit narrow screens. Vercel serves an installation manifest for the mobile home-screen experience.
+
+Apply `20261122153000_studio_personal_workspaces.sql` after the blueprint migration to enable personal dashboards, participant-only direct chats, project profiles, opt-in AI credit tracking and integration settings. The project pages detect whether this migration is available. The Vercel runtime role holds the encrypted GitHub token table. Project leaders enter repository-scoped tokens through Settings. Public repositories can continue to load without a token.
+
+The existing `/api/assist` route reads project data with the caller's Supabase permissions. Setup drafts and self-profile analysis use the configured platform Gemini key when the project AI policy allows it. Regular assistance uses the project's encrypted Gemini key. Direct chat summaries require explicit consent and participant access. AI credit tracking uses manually entered allowances and reset windows.
+
+Run `tests/personal-workspaces-access.sql` against an isolated test schema to exercise private threads, shared credits and lead transfers. The test transaction rolls back its records.
