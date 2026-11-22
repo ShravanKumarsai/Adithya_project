@@ -113,11 +113,14 @@ export function mountPersonalStudio(ctx) {
   const skills = [["", "General"], ...studioSkills.map((s) => [s, s])];
   let channel,
     timer,
+    claudeTimer,
+    claudeRequest,
     selected,
     details,
     threads = [],
     markers = [],
     credits = [],
+    claude = [],
     messages = [];
   function add(html) {
     root.insertAdjacentHTML("beforeend", html);
@@ -642,9 +645,84 @@ export function mountPersonalStudio(ctx) {
       "</div>"
     );
   }
+  async function loadClaudeCredits() {
+    claude = await result(
+      db.from("studio_claude_connections")
+        .select("id,user_id,shared,studio_claude_windows(window_key,used,reset_at,synced_at)")
+        .eq("project_id", id),
+    );
+  }
+  function claudeSetup(existing) {
+    let token;
+    form(
+      existing ? "Replace Claude sync token" : "Connect Claude Code",
+      "<p>Use Claude Code signed in to an eligible Claude subscription. The connector sends the usage percentage and reset time for each window.</p>" +
+        (existing ? "<p>Generating a new token revokes your current token.</p>" : "") +
+        '<p>Save to generate your personal sync token.</p>',
+      async () => { token = await rpc("connect_studio_claude", {p_project: id}); },
+      async () => {
+        await refresh();
+        const settings = JSON.stringify({statusLine: {
+          type: "command",
+          command: 'AITHYA_CLAUDE_SYNC_TOKEN=' + token + ' python3 "$HOME/.claude/aithya-credit-sync.py"',
+          refreshInterval: 60,
+        }}, null, 2);
+        form(
+          "Set up the Claude Code connector",
+          '<ol><li><a href="/claude-credit-sync.txt" download="aithya-credit-sync.py">Download the connector</a> and save it as <code>~/.claude/aithya-credit-sync.py</code>.</li>' +
+            '<li>On macOS or Linux, merge the <code>statusLine</code> entry below into <code>~/.claude/settings.json</code>. Keep the token private. If you already use a status line, back up that entry first.</li>' +
+            '<li>Start Claude Code and send a message to load your usage windows.</li></ol>' +
+            '<label>Claude Code settings<textarea rows="8" readonly spellcheck="false">' +
+            escape(settings) + '</textarea></label>',
+          async () => {},
+          async () => {},
+        );
+        document.querySelector("#shared-form button.primary").textContent = "Done";
+      },
+    );
+  }
+  function drawClaude(target, ownOnly, reload) {
+    const mine = claude.find((c) => c.user_id === user);
+    const now = Date.now();
+    const visible = claude.filter((c) => !ownOnly || c.user_id === user);
+    target.innerHTML = panel(
+      "Live Claude usage",
+      '<p>Connect Claude Code to see your subscription usage and get refill alerts in the notification bell.</p>' +
+        button("claude-connect", mine ? "Replace sync token" : "Connect Claude Code") +
+        (mine ? button("claude-sharing", mine.shared ? "Make private" : "Share with team") +
+          button("claude-disconnect", "Disconnect") : "") +
+        (visible.length ? '<div class="studio-table-wrap" tabindex="0" aria-label="Claude quota windows"><table class="studio-table credits-table"><thead><tr><th scope="col">Member</th><th scope="col">Window</th><th scope="col">Usage</th><th scope="col">Reset</th></tr></thead><tbody>' +
+          visible.map((connection) => {
+            const windows = connection.studio_claude_windows;
+            if (!windows.length) return '<tr><th scope="row">' + escape(name(connection.user_id)) +
+              '</th><td colspan="3">Waiting for Claude Code to send its first reading.</td></tr>';
+            return [...windows].sort((a, b) => a.window_key.localeCompare(b.window_key)).map((reading) => {
+              const ended = Date.parse(reading.reset_at) <= now;
+              const fresh = now - Date.parse(reading.synced_at) < 180000;
+              const label = reading.window_key === "five_hour" ? "5-hour limit" : "Weekly limit";
+              return '<tr><th scope="row">' + escape(name(connection.user_id)) + '</th><td>' + label +
+                '</td><td>' + (ended ? 'Awaiting next reading' : escape(reading.used) + '% used' +
+                  '<progress max="100" value="' + escape(reading.used) + '" aria-label="' + label + ' used"></progress>') +
+                '<small>' + escape((ended || !fresh ? "Last synced " : "Live · synced ") + when(reading.synced_at)) +
+                '</small></td><td>' + (ended ? 'Reset time reached' : escape(when(reading.reset_at))) + '</td></tr>';
+            }).join("");
+          }).join("") + '</tbody></table></div>' : ""),
+    );
+    bind("claude-connect", () => claudeSetup(mine), target);
+    if (mine) {
+      bind("claude-sharing", async () => {
+        await result(db.from("studio_claude_connections").update({shared: !mine.shared}).eq("id", mine.id));
+        await reload();
+      }, target);
+      bind("claude-disconnect", () => form("Disconnect Claude Code",
+        "<p>This revokes the sync token and removes the Claude usage readings from this project.</p>",
+        () => result(db.from("studio_claude_connections").delete().eq("id", mine.id)), reload), target);
+    }
+  }
   async function showCredits(own = false) {
     await loadCredits();
     if (!root.isConnected) return;
+    add('<div id="v3-live-credits"></div>');
     add(
       panel(
         own ? "Personal AI accounts" : "AI credits",
@@ -662,6 +740,25 @@ export function mountPersonalStudio(ctx) {
       creditRows(rows, own);
     };
     draw();
+    const live = root.querySelector("#v3-live-credits");
+    const reloadClaude = async () => {
+      if (claudeRequest || !live.isConnected) return;
+      claudeRequest = loadClaudeCredits();
+      try {
+        await claudeRequest;
+        if (live.isConnected && (!live.contains(document.activeElement) || document.activeElement.disabled))
+          drawClaude(live, own, reloadClaude);
+      } catch {
+        if (live.isConnected && !live.hasChildNodes())
+          live.innerHTML = panel("Live Claude usage", "<p>Live usage could not load. Retrying shortly.</p>");
+      } finally {
+        claudeRequest = null;
+      }
+    };
+    reloadClaude();
+    claudeTimer = setInterval(() => {
+      if (!document.hidden) reloadClaude();
+    }, 15000);
     timer = setInterval(draw, 1000);
     bind("account", () => accountEditor());
   }
@@ -1205,6 +1302,7 @@ export function mountPersonalStudio(ctx) {
   }
   return () => {
     clearInterval(timer);
+    clearInterval(claudeTimer);
     if (channel) db.removeChannel(channel);
   };
 }

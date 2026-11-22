@@ -82,3 +82,11 @@ The project rail follows the final 18-sheet order. Blueprint, Light and Midnight
 The final-workflows migration adds team stand-ups, private study notes, timeline proposal approval, and immutable close snapshots with private portfolio history. The companion GitHub token migration adds encrypted repository credentials in the server-only runtime schema. The same authenticated /api/assist route handles Quick add, case-file explanations, task ideas, daily digests, stand-up merges and report notes. The project policy controls AI access and all draft workflows have Basic results. There are no new environment secrets.
 
 Run `tests/final-workspace-access.sql` after the earlier collaboration checks. It uses a rolled-back transaction to exercise study-note privacy, pin authorization, recipient-only proposal decisions, retry safety and leader-only report close.
+
+### Live Claude subscription usage
+
+Open a shared project, go to **AI credits**, and choose **Connect Claude Code**. Follow the connector instructions in the dialog. The generated token is scoped to the connection and stays private. Use **Replace sync token** or **Disconnect** to revoke it.
+
+For eligible Claude subscriptions, the connector reads the 5-hour and weekly usage windows that Claude Code reports through its official status line. Claude Code reports them after its first response. Once a window ends, Aithya shows that its reset time has passed and waits for the next provider reading. The notification bell uses the provider-reported timestamp, even with Claude Code or the browser closed. Refill alerts are private and can be turned off in project Settings. Other tools can be tracked manually.
+
+[Claude Code status-line documentation](https://code.claude.com/docs/en/statusline#rate-limit-usage)

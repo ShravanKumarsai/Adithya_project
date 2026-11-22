@@ -13,6 +13,8 @@ export function notifications({
   const count = document.getElementById("notification-count");
   const list = document.getElementById("notification-list");
   const names = {
+    "credits.claude.five_hour": "Claude’s 5-hour credits reached their reset time",
+    "credits.claude.seven_day": "Claude’s weekly credits reached their reset time",
     "chat.mention":"You were mentioned in team chat", "chat.proposal":"A teammate proposed a task for you","milestone.overdue":"Milestone overdue",
     "projects.insert": "Project created",
     "projects.update": "Project brief or status updated",
