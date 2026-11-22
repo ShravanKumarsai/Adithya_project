@@ -401,7 +401,7 @@ export function mountPersonalStudio(ctx) {
     bind("availability", editProfile);
     bind("day", () => openSheet("My dashboard"));
     bind("board", () => openSheet("Board"));
-    bind("help", () => openSheet("Direct chats"));
+    bind("help", () => openSheet("Chats"));
     bind("credits", () => openSheet("AI credits"));
     bind("role", async () =>
       draft(
@@ -541,53 +541,56 @@ export function mountPersonalStudio(ctx) {
   function creditRows(target, ownOnly = false) {
     const now = Date.now();
     const rows = credits.filter((c) => !ownOnly || c.user_id === user);
-    target.innerHTML =
-      rows
-        .map((c) => {
-          const left = available(c),
-            seconds = Math.max(
+    target.innerHTML = rows.length
+      ? '<div class="studio-table-wrap" tabindex="0" aria-label="AI account usage"><table class="studio-table credits-table"><thead><tr><th scope="col">Account</th><th scope="col">Usage</th><th scope="col">Window</th><th scope="col">Manage</th></tr></thead><tbody>' +
+        rows
+          .map((c) => {
+            const seconds = Math.max(
               0,
               Math.ceil((Date.parse(c.reset_at) - now) / 1000),
             );
-          return (
-            '<article class="bp-card"><strong>' +
-            escape(c.tool + (c.handle ? " · " + c.handle : "")) +
-            "</strong><p>" +
-            escape(name(c.user_id)) +
-            " · " +
-            left +
-            " / " +
-            c.allowance +
-            " " +
-            escape(c.unit.toLowerCase()) +
-            ' remaining</p><progress max="' +
-            c.allowance +
-            '" value="' +
-            Math.min(c.allowance, activeUsed(c)) +
-            '" aria-label="' +
-            escape(c.tool) +
-            ' usage"></progress><p>' +
-            escape(
-              seconds
-                ? (seconds >= 3600 ? Math.floor(seconds / 3600) + "h " : "") +
-                    Math.floor((seconds % 3600) / 60) +
-                    "m " +
-                    (seconds % 60) +
-                    "s until refresh"
-                : "Window refreshed. Update usage to start a new window.",
-            ) +
-            (c.user_id === user
-              ? " · " + (c.shared ? "Shared" : "Private")
-              : "") +
-            "</p>" +
-            (c.user_id === user
-              ? button("edit-credit-" + c.id, "Edit usage") +
-                button("remove-credit-" + c.id, "Remove account")
-              : "") +
-            "</article>"
-          );
-        })
-        .join("") || "<p>No visible AI accounts.</p>";
+            const countdown = seconds
+              ? (seconds >= 3600 ? Math.floor(seconds / 3600) + "h " : "") +
+                Math.floor((seconds % 3600) / 60) +
+                "m " +
+                (seconds % 60) +
+                "s"
+              : "Refreshed";
+            return (
+              '<tr><th scope="row">' +
+              escape(c.tool) +
+              (c.handle ? "<small>" + escape(c.handle) + "</small>" : "") +
+              "<small>" +
+              escape(name(c.user_id)) +
+              "</small></th><td>" +
+              activeUsed(c) +
+              " / " +
+              c.allowance +
+              " " +
+              escape(c.unit.toLowerCase()) +
+              '<progress max="' +
+              c.allowance +
+              '" value="' +
+              Math.min(c.allowance, activeUsed(c)) +
+              '" aria-label="' +
+              escape(c.tool) +
+              ' usage"></progress></td>' +
+              "<td>" +
+              countdown +
+              (c.user_id === user
+                ? "<small>" + (c.shared ? "Shared" : "Private") + "</small>"
+                : "") +
+              "</td><td>" +
+              (c.user_id === user
+                ? button("edit-credit-" + c.id, "Edit") +
+                  button("remove-credit-" + c.id, "Remove")
+                : "") +
+              "</td></tr>"
+            );
+          })
+          .join("") +
+        "</tbody></table></div>"
+      : "<p>No visible AI accounts.</p>";
     for (const c of rows.filter((c) => c.user_id === user)) {
       bind("edit-credit-" + c.id, () => accountEditor(c), target);
       bind(
@@ -610,28 +613,33 @@ export function mountPersonalStudio(ctx) {
     const next = ordered
       .filter((c) => Date.parse(c.reset_at) > Date.now())
       .sort((a, b) => Date.parse(a.reset_at) - Date.parse(b.reset_at))[0];
+    const item = (label, value, note = "") =>
+      "<div><small>" +
+      escape(label) +
+      "</small><strong>" +
+      escape(value) +
+      "</strong>" +
+      (note ? "<p>" + escape(note) + "</p>" : "") +
+      "</div>";
     return (
-      "<p>" +
-      escape(
-        ordered[0]
-          ? "Most headroom · " +
-              name(ordered[0].user_id) +
-              " on " +
-              ordered[0].tool
-          : "No entries yet.",
+      '<div class="studio-metrics">' +
+      item(
+        "Most headroom",
+        ordered[0] ? name(ordered[0].user_id) : "No accounts",
+        ordered[0]?.tool,
       ) +
-      "</p>" +
-      "<p>" +
-      escape(
-        low.length
-          ? low.length + " accounts near their limit"
-          : "No accounts near limit",
+      item("Near limit", low.length) +
+      item(
+        "Next refresh",
+        next
+          ? new Date(next.reset_at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "None",
+        next?.tool,
       ) +
-      "</p><p>" +
-      escape(
-        next ? "Next refresh · " + when(next.reset_at) : "No refresh pending.",
-      ) +
-      "</p>"
+      "</div>"
     );
   }
   async function showCredits(own = false) {
@@ -737,22 +745,18 @@ export function mountPersonalStudio(ctx) {
     );
   }
   async function chats() {
-    add(
-      '<div class="v3-inbox">' +
-        panel(
-          "Direct chats",
-          button("new-conversation", "Start direct chat") +
-            '<div id="v3-thread-list"></div>',
-        ) +
-        panel(
-          "Conversation",
-          '<div id="v3-conversation"><p>Choose a thread or start a help request.</p></div>',
-        ) +
-        "</div>",
-    );
+    const box = root.querySelector("#studio-private-list");
+    if (!box) return;
+    box.innerHTML =
+      button("new-conversation", "New chat") +
+      '<div id="v3-thread-list"></div>';
     bind("new-conversation", createThread);
     await loadThreads();
-    if (root.isConnected) drawThreads();
+    if (root.isConnected) await drawThreads();
+    root.addEventListener("team-thread-open", () => {
+      selected = null;
+      drawThreads().catch((e) => notify(e.message));
+    });
   }
   async function drawThreads() {
     const box = root.querySelector("#v3-thread-list");
@@ -778,12 +782,21 @@ export function mountPersonalStudio(ctx) {
               m.author_id !== user &&
               (unread(t) === "-infinity" || m.created_at > unread(t)),
           ).length;
-          return button(
-            "open-" + t.id,
-            t.topic +
-              (t.skill ? " · " + t.skill : "") +
-              (t.resolved ? " · Closed" : "") +
-              (count ? " · " + count + " unread" : ""),
+          return (
+            '<button type="button" class="conversation-link" aria-current="' +
+            (selected === t.id) +
+            '" data-v3="open-' +
+            t.id +
+            '"><span class="chat-avatar" aria-hidden="true">' +
+            escape(t.topic.slice(0, 2).toUpperCase()) +
+            "</span><span><strong>" +
+            escape(t.topic) +
+            "</strong><small>" +
+            escape(
+              (t.skill || "Private chat") +
+                (count ? " · " + count + " unread" : ""),
+            ) +
+            "</small></span></button>"
           );
         })
         .join("") || "No conversations.";
@@ -794,34 +807,90 @@ export function mountPersonalStudio(ctx) {
     const thread = threads.find((t) => t.id === threadId);
     const box = root.querySelector("#v3-conversation");
     if (!thread || !box) return;
+    root.querySelector(".studio-chat").classList.add("show-thread");
+    root.querySelector("#studio-team-thread").hidden = true;
+    root
+      .querySelector('[data-bp="team-thread"]')
+      .setAttribute("aria-current", "false");
+    box.hidden = false;
+    const names = markers
+      .filter((m) => m.thread_id === threadId)
+      .map((m) => name(m.user_id))
+      .join(", ");
     box.innerHTML =
-      "<h3>" +
+      "<header><div><h2>" +
       escape(thread.topic) +
-      "</h3><p>" +
-      escape(
-        markers
-          .filter((m) => m.thread_id === threadId)
-          .map((m) => name(m.user_id))
-          .join(", "),
-      ) +
-      '</p><div id="v3-direct-log" role="log" aria-live="polite"></div>' +
-      field("direct_message", "Message", "", "textarea", 'maxlength="6000"') +
-      button("send-direct", "Send reply") +
-      button("summarize-direct", "Summarize this private thread") +
+      "</h2><p>" +
+      escape(names) +
+      "</p></div>" +
+      button("back-chats", "All chats") +
+      "</header>" +
+      '<div id="v3-direct-log" class="studio-chat-log" role="log" aria-live="polite"></div><div class="studio-composer">' +
+      '<details><summary>Actions</summary><div class="chat-actions">' +
+      button("summarize-direct", "Summarize this thread") +
       (thread.creator_id === user
         ? button(
             "resolve-direct",
             thread.resolved ? "Reopen help request" : "Resolve help request",
           )
-        : "");
+        : "") +
+      "</div></details>" +
+      '<label class="studio-attach" title="Attach a private file"><span aria-hidden="true">＋</span><span class="studio-sr">Attach a private file</span><input name="direct_file" type="file"></label>' +
+      '<label class="studio-message-field"><span class="studio-sr">Message</span><textarea name="direct_message" rows="1" maxlength="6000" placeholder="Write a message"></textarea></label>' +
+      button("send-direct", "Send reply") +
+      '<output id="direct-attachment-name"></output></div>';
+    box.querySelector("[name=direct_file]").onchange = (e) =>
+      (box.querySelector("#direct-attachment-name").textContent =
+        e.target.files[0]?.name || "");
+    bind(
+      "back-chats",
+      () => root.querySelector(".studio-chat").classList.remove("show-thread"),
+      box,
+    );
+    box.querySelector("[name=direct_message]").onkeydown = (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        box.querySelector("[data-v3=send-direct]").click();
+      }
+    };
     bind(
       "send-direct",
       async () => {
         const input = box.querySelector("[name=direct_message]");
-        const body = input.value.trim();
-        if (!body) throw Error("Write a message.");
-        await addRow("studio_thread_messages", { thread_id: threadId, body });
+        const picker = box.querySelector("[name=direct_file]");
+        const file = picker.files[0];
+        const body = input.value.trim() || file?.name;
+        if (!body) throw Error("Write a message or choose a file.");
+        if (file && (!file.size || file.size > 10 * 1024 * 1024))
+          throw Error("Choose a file between one byte and 10 MB.");
+        const storage = db.storage.from("studio-direct");
+        const path = file
+          ? threadId + "/" + user + "/" + crypto.randomUUID()
+          : null;
+        if (file) await result(storage.upload(path, file));
+        try {
+          const message = await result(
+            db
+              .from("studio_thread_messages")
+              .insert({ thread_id: threadId, body })
+              .select("id")
+              .single(),
+          );
+          if (file)
+            await addRow("studio_thread_attachments", {
+              message_id: message.id,
+              thread_id: threadId,
+              path,
+              filename: file.name.slice(0, 255),
+              bytes: file.size,
+            });
+        } catch (error) {
+          if (path) await storage.remove([path]);
+          throw error;
+        }
         input.value = "";
+        picker.value = "";
+        box.querySelector("#direct-attachment-name").textContent = "";
         await loadMessages(threadId);
       },
       box,
@@ -886,20 +955,59 @@ export function mountPersonalStudio(ctx) {
     );
     const log = root.querySelector("#v3-direct-log");
     if (!log || selected !== threadId) return;
+    const files = rows.length
+      ? await result(
+          db
+            .from("studio_thread_attachments")
+            .select("*")
+            .eq("thread_id", threadId)
+            .in(
+              "message_id",
+              rows.map((m) => m.id),
+            ),
+        )
+      : [];
+    if (!log.isConnected || selected !== threadId) return;
     messages = rows.reverse();
+    const follow = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
     log.innerHTML =
       messages
-        .map(
-          (m) =>
-            '<article class="bp-card"><small>' +
-            escape(name(m.author_id)) +
+        .map((m) => {
+          const file = files.find((f) => f.message_id === m.id);
+          return (
+            '<article class="chat-bubble ' +
+            (m.author_id === user ? "mine" : "theirs") +
+            '"><small>' +
+            escape(m.author_id === user ? "You" : name(m.author_id)) +
             " · " +
             escape(when(m.created_at)) +
             "</small><p>" +
             escape(m.body) +
-            "</p></article>",
-        )
+            "</p>" +
+            (file
+              ? button("direct-file-" + m.id, "Download " + file.filename)
+              : "") +
+            "</article>"
+          );
+        })
         .join("") || "<p>No replies yet.</p>";
+    if (follow) log.scrollTop = log.scrollHeight;
+    for (const file of files)
+      bind(
+        "direct-file-" + file.message_id,
+        async () => {
+          const blob = await result(
+            db.storage.from("studio-direct").download(file.path),
+          );
+          const url = URL.createObjectURL(blob),
+            link = document.createElement("a");
+          link.href = url;
+          link.download = file.filename;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 5000);
+        },
+        log,
+      );
     const last = messages.at(-1);
     if (last) {
       await result(
@@ -919,7 +1027,6 @@ export function mountPersonalStudio(ctx) {
   }
   const endpoint = {
     Gemini: "/api/planning/key",
-    GitHub: "/api/github/token",
     Vercel: "/api/vercel/token",
   };
   async function connection(tool, method = "GET", key, check = false) {
@@ -956,7 +1063,7 @@ export function mountPersonalStudio(ctx) {
                 button("repository", "Edit repository and deployment") +
                 button("policy", "Edit AI policy") +
                 '<div id="v3-connectors"></div>' +
-                button("handover", "Transfer leadership"),
+                "",
             )
           : ""),
     );
@@ -985,29 +1092,6 @@ export function mountPersonalStudio(ctx) {
     if (leader) {
       bind("repository", editConnections);
       bind("policy", editPolicy);
-      bind("handover", () =>
-        form(
-          "Transfer leadership",
-          select(
-            "next",
-            "New project leader",
-            others.map((m) => [m.user_id, m.full_name]),
-          ) +
-            yes(
-              "confirm",
-              "Give this teammate control of project settings and encrypted connections",
-              false,
-            ),
-          async (values) => {
-            if (!values.has("confirm"))
-              throw Error("Confirm leadership transfer.");
-            await rpc("transfer_studio_lead", {
-              p_project: id,
-              p_member: values.get("next"),
-            });
-          },
-        ),
-      );
       const items = await Promise.all(
         Object.keys(endpoint).map(async (tool) => [
           tool,
@@ -1074,13 +1158,13 @@ export function mountPersonalStudio(ctx) {
   }
   const page = {
     "My dashboard": dashboard,
-    "Direct chats": chats,
+    Chat: ctx.data.personalReady ? chats : undefined,
     "AI credits": () => showCredits(),
     Settings: settings,
   }[tab];
   if (!page) return () => {};
   page().catch((err) => notify(err.message));
-  if (tab === "Direct chats" || tab === "My dashboard") {
+  if ((tab === "Chat" && ctx.data.personalReady) || tab === "My dashboard") {
     channel = db.channel("private-inbox-" + crypto.randomUUID());
     const onChange = async (event) => {
       if (!root.isConnected) return;
@@ -1094,7 +1178,11 @@ export function mountPersonalStudio(ctx) {
         notify(e.message);
       }
     };
-    for (const table of ["studio_thread_messages", "studio_thread_members"])
+    for (const table of [
+      "studio_thread_messages",
+      "studio_thread_members",
+      "studio_thread_attachments",
+    ])
       channel.on(
         "postgres_changes",
         { schema: "public", table, event: "INSERT" },

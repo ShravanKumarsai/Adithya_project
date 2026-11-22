@@ -16,10 +16,6 @@ do $$ begin
   if (select count(*) from studio_thread_messages)<>1 then raise exception 'Participant could not see thread';end if;
   if (select count(*) from studio_ai_accounts)<>1 or exists(select from studio_ai_accounts where not shared) then raise exception 'Private allowance exposed';end if;
   if exists(select from studio_member_details) then raise exception 'Private profile exposed';end if;
-  begin
-    perform public.transfer_studio_lead('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000003');
-    raise exception 'Non-lead transferred project';
-  exception when others then if sqlerrm='Non-lead transferred project' then raise;end if;end;
 end $$;
 insert into studio_thread_messages(thread_id,body) values(current_setting('aithya.thread')::uuid,'Verified reply');
 select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000003',true);
@@ -28,10 +24,5 @@ do $$ begin
   begin insert into studio_thread_messages(thread_id,body) values(current_setting('aithya.thread')::uuid,'Blocked reply');raise exception 'Non-participant posted';
   exception when insufficient_privilege then null;end;
 end $$;
-select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
-select public.transfer_studio_lead('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002');
-do $$ begin
-  if (select leader_id from projects where id='20000000-0000-4000-8000-000000000001')<>'10000000-0000-4000-8000-000000000002' then raise exception 'Transfer did not persist';end if;
-end $$;
 rollback;
-select 'PASS · thread visibility, reply permissions, consent-based credits, private profiles and leadership transfer';
+select 'PASS · thread visibility, reply permissions, consent-based credits, and private profiles';

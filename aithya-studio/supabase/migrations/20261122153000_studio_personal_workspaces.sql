@@ -110,20 +110,7 @@ grant select,insert,delete on public.studio_mentor_history to authenticated;
 create policy own_mentor_history on public.studio_mentor_history for all to authenticated
 using(user_id=auth.uid() and public.has_accepted_project_membership(project_id))
 with check(user_id=auth.uid() and public.has_accepted_project_membership(project_id));
-create function public.transfer_studio_lead(p_project uuid,p_member uuid) returns void
-language plpgsql security definer set search_path='' as $$
-begin
-  if not exists(select from public.projects where id=p_project and leader_id=auth.uid() and archived_at is null for update)
-      or p_member is null or p_member=auth.uid() or not exists(select from public.project_members where project_id=p_project and user_id=p_member and status='accepted')
-  then raise exception 'Choose an accepted teammate as the new leader'; end if;
-  update public.project_members set is_leader=(user_id=p_member) where project_id=p_project and user_id in (auth.uid(),p_member);
-  update public.projects set leader_id=p_member where id=p_project;
-end $$;
-revoke all on function public.transfer_studio_lead(uuid,uuid) from public,anon;
-grant execute on function public.transfer_studio_lead(uuid,uuid) to authenticated;
 alter publication supabase_realtime add table public.studio_thread_messages,public.studio_thread_members;
-create table aithya_runtime.project_github_tokens(project_id uuid primary key references public.projects on delete cascade,nonce text not null,ciphertext text not null);
-grant select,insert,update,delete on aithya_runtime.project_github_tokens to aithya_vercel_app;
 alter table public.ai_runs add column input_tokens integer, add column output_tokens integer;
 
 create function public.apply_studio_plan(p_project uuid,p_requirements text[],p_tasks jsonb,p_milestones jsonb,p_roles text[]) returns void

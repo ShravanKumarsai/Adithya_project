@@ -1,3 +1,4 @@
+import {mountReport} from "./studio-report.js";
 import {mountBlueprint} from "./blueprint.js";
 import {studioSkills} from "./assist-contract.js";
 import { insightsView } from "./project-insights.js";
@@ -9,12 +10,19 @@ import { supabase as db } from "./lib/supabase.js";
 
 let detachSheet=()=>{};
 const themeButton=document.querySelector("#blueprint-theme");
-function setTheme(light){
-  document.documentElement.dataset.blueprint=light?"light":"dark";
-  themeButton.textContent=light?"Use dark theme":"Use light theme";
+const themes=["dark","light","blueprint"];
+const nextTheme=theme=>themes[(themes.indexOf(theme)+1)%themes.length];
+function setTheme(theme){
+  document.documentElement.dataset.blueprint=theme;
+  themeButton.textContent="Use "+nextTheme(theme)+" theme";
 }
-setTheme(localStorage.getItem("aithya.theme")==="light");
-themeButton.onclick=()=>{const light=document.documentElement.dataset.blueprint!=="light";setTheme(light);localStorage.setItem("aithya.theme",light?"light":"dark")};
+const savedTheme=localStorage.getItem("aithya.theme");
+setTheme(themes.includes(savedTheme)?savedTheme:"dark");
+themeButton.onclick=()=>{
+  const theme=nextTheme(document.documentElement.dataset.blueprint);
+  setTheme(theme);
+  localStorage.setItem("aithya.theme",theme);
+};
 const main = document.getElementById("shared-main");
 const dialog = document.getElementById("shared-dialog");
 const escape = (value) =>
@@ -913,26 +921,26 @@ function renderProject() {
   detachSheet();
   const groups = {
     Workspace:["Overview","My dashboard","Board","Timeline"],
-    Teamwork:["Team chat","Direct chats","Team","Learning"],
-    Project:["Project setup","Planning","Files","Activity","Submission"],
-    Studio:["AI mentor","AI credits","Memory","History","Settings"],
+    Teamwork:["Chats","Team","Learning"],
+    Project:["Project setup","Planning","Files","Activity","Submission","Report"],
+    Studio:["AI mentor","AI credits","Portfolio","Memory","History","Settings"],
   };
   const gated = new Set(["My dashboard","Direct chats","AI credits","Settings"]);
   if(!data.personalReady)for(const group of Object.keys(groups))groups[group]=groups[group].filter(t=>!gated.has(t));
   const tabs=Object.values(groups).flat();
   if(!tabs.includes(tab))tab="Overview";
-  const viewAliases={"Project setup":"Setup","Team chat":"Chat","AI mentor":"Mentor","Submission":"Ship"};
+  const viewAliases={"Project setup":"Setup",Chats:"Chat","AI mentor":"Mentor","Submission":"Ship"};
   const view=viewAliases[tab]||tab;
   const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view]||"Build";
   main.innerHTML =
-    '<header class="shared-header"><div><p class="compact-info">' +
+    '<header class="shared-header project-masthead"><div><p class="compact-info">' +
     escape(project.hackathon_name || "Shared project") +
     "</p><h1>" +
     escape(project.name) +
     '</h1></div><div class="shared-actions">' +
     button("back-projects", "Shared projects") +
     button("refresh-shared", "Refresh") +
-    '</div></header><div class="bp-titleblock"><div class="bp-steps">'+["Idea","Plan","Team","Build","Learn","Ship"].map(x=>'<span'+(stage===x?' aria-current="step"':'')+'>'+x+'</span>').join('')+'</div><small>Sheet '+(tabs.indexOf(tab)+1)+' / '+tabs.length+' · Due '+escape(project.submission_deadline||"unscheduled")+' · Scale 1:1</small></div><div class="bp-layout"><nav class="shared-tabs" aria-label="Project sheets">' +
+    '</div></header><div class="bp-titleblock"><div class="bp-steps">'+["Idea","Plan","Team","Build","Learn","Ship"].map(x=>'<span'+(stage===x?' aria-current="step"':'')+'>'+x+'</span>').join('')+'</div><small>Due '+escape(project.submission_deadline||"unscheduled")+'</small></div><div class="bp-layout"><nav class="shared-tabs" aria-label="Project sheets">' +
     Object.entries(groups).map(([group,sheets])=>'<div class="v3-nav-group"><p>'+group+'</p>'+
       sheets.map(t=>'<button type="button" aria-current="'+(tab===t?"page":"false")+'" id="tab-'+(viewAliases[t]||t.replaceAll(" ","-"))+'"><span>'+
         String(tabs.indexOf(t)+1).padStart(2,"0")+'</span>'+escape(t)+'</button>').join("")+'</div>').join("") +
@@ -941,11 +949,13 @@ function renderProject() {
   bind("refresh-shared", loadProject);
   for (const t of tabs)
     bind("tab-" + (viewAliases[t]||t.replaceAll(" ","-")), () => {
+      if(t==="Portfolio"){document.getElementById("portfolio-nav").click();return}
       tab = t;
       renderProject();
     });
   ({
     Overview: overviewView,
+    Report:()=>mountReport({project,data,db,result,modal,notify,session,refresh:loadProject,escape},document.getElementById("shared-content")),
     Setup: requirementsView,
     Team: teamView,
     Board: tasksView,
@@ -967,7 +977,7 @@ function renderProject() {
     History: historyView,
   })[view]?.();
   const openSheet=next=>{tab=Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next;renderProject()};
-  detachSheet=mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editPolicy:editAiPolicy});
+  detachSheet=mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editTask,editPolicy:editAiPolicy});
 
 }
 const content = (html) =>
@@ -1771,8 +1781,12 @@ function tasksView() {
         .join("") +
       '</ul><p class="shared-muted">Estimates and availability are declared by the team.</p></section>',
   );
-  const edit = (t) =>
-    modal(
+  bind("add-task", () => editTask());
+  for (const t of data.tasks) bind("task-" + t.id, () => editTask(t));
+}
+
+function editTask(t) {
+  return modal(
       t ? "Edit task" : "Add task",
       field("title", "Title", t?.title, "text", true) +
         select(
@@ -1827,8 +1841,6 @@ function tasksView() {
         );
       },
     );
-  bind("add-task", () => edit());
-  for (const t of data.tasks) bind("task-" + t.id, () => edit(t));
 }
 function learningView() {
   content(

@@ -160,6 +160,7 @@ export function mountBlueprint(ctx) {
     notify,
     refresh,
     openSheet,
+    editTask,
     editConnections,
     editProfile,
     editPolicy,
@@ -378,6 +379,50 @@ export function mountBlueprint(ctx) {
       )
     );
   }
+  function milestoneStrip() {
+    const start = Date.parse(p.start_date || p.created_at.slice(0, 10)),
+      finish = Date.parse(p.submission_deadline || "");
+    if (!(finish > start)) return "";
+    const x = (date) =>
+      18 + 464 * Math.max(0, Math.min(1, (date - start) / (finish - start)));
+    const today = x(Date.now()),
+      items = milestones
+        .filter(
+          (m) => Date.parse(m.due) >= start && Date.parse(m.due) <= finish,
+        )
+        .slice()
+        .sort((a, b) => a.due.localeCompare(b.due))
+        .slice(0, 12);
+    return (
+      '<figure class="deadline-axis"><svg viewBox="0 0 500 46" role="img" aria-label="Milestones along the project timeline"><line x1="18" x2="482" y1="30" y2="30" class="axis-line"></line><line x1="' +
+      today +
+      '" x2="' +
+      today +
+      '" y1="8" y2="45" class="today-mark"></line>' +
+      items
+        .map(
+          (m, i) =>
+            "<g><title>" +
+            esc(m.name + " · " + m.due) +
+            '</title><circle cx="' +
+            x(Date.parse(m.due)) +
+            '" cy="30" r="9" class="' +
+            (m.done ? "completed" : "planned") +
+            '"></circle><text x="' +
+            x(Date.parse(m.due)) +
+            '" y="33" text-anchor="middle">' +
+            (i + 1) +
+            "</text></g>",
+        )
+        .join("") +
+      "</svg>" +
+      "<figcaption><span>" +
+      esc(p.start_date || p.created_at.slice(0, 10)) +
+      "</span><span>Dashed line · Today</span><span>" +
+      esc(p.submission_deadline) +
+      "</span></figcaption></figure>"
+    );
+  }
   function clock() {
     const end = dateEnd(p.submission_deadline),
       start = new Date(
@@ -407,6 +452,7 @@ export function mountBlueprint(ctx) {
           d.availability.reduce((s, a) => s + Number(a.weekly_hours), 0) / 7
         ).toFixed(1) +
         " h/day available</p>" +
+        milestoneStrip() +
         (elapsed !== null
           ? bar("Time used", elapsed, 100, "%") +
             bar("Work done", completion, 100, "%", "done") +
@@ -450,46 +496,67 @@ export function mountBlueprint(ctx) {
       (d.requirements.length ? verified / d.requirements.length : 0)) /
     5;
   function overview() {
+    const secondary = document.createElement("details");
+    secondary.className = "studio-more";
+    const label = document.createElement("summary");
+    label.textContent = "Project brief and readiness details";
+    secondary.append(label, ...root.children);
+    const completed = d.tasks.filter((t) => t.status === "done").length;
+    const upcoming = milestones
+      .filter((m) => !m.done)
+      .slice()
+      .sort((a, b) => a.due.localeCompare(b.due))[0];
+    const metricItem = (label, value) =>
+      "<div><small>" +
+      esc(label) +
+      "</small><strong>" +
+      esc(value) +
+      "</strong></div>";
     root.insertAdjacentHTML(
       "afterbegin",
-      '<div class="bp-grid">' +
+      '<div class="studio-metrics">' +
+        metricItem("Readiness", Math.round(readiness * 100) + "%") +
+        metricItem("Deadline risk", metric.risk) +
+        metricItem("Tasks done", completed + " / " + d.tasks.length) +
+        "</div>" +
+        '<div class="hero-timeline">' +
         clock() +
-        panel(
-          "Submission readiness",
-          bar("Evidence", Math.round(readiness * 100), 100, "%", "done") +
-            "<p>" +
-            esc(
-              [
-                !p.repository && "Repository",
-                ...checklist.filter((k) => !evidence[k]),
-                (!d.requirements.length || verified < d.requirements.length) &&
-                  "Verified rulebook checklist",
-              ]
-                .filter(Boolean)
-                .join(" · ") || "Evidence complete",
-            ) +
-            "</p>" +
-            btn("submission", "Review submission"),
-        ) +
-        charts() +
+        (upcoming
+          ? "<p>Next milestone · " +
+            esc(upcoming.name) +
+            " · " +
+            esc(upcoming.due) +
+            "</p>"
+          : "") +
+        btn("open-timeline", "Open timeline") +
+        "</div>" +
+        '<div class="overview-columns">' +
         panel("Weekly status", btn("week", "Refresh summary")) +
+        panel(
+          "Team workload",
+          team
+            .map((m) => {
+              const total = d.tasks
+                .filter((t) => t.owner_id === m.user_id && t.status !== "done")
+                .reduce((sum, t) => sum + Number(t.estimated_hours), 0);
+              const capacity = Number(
+                d.availability.find((a) => a.user_id === m.user_id)
+                  ?.weekly_hours || 0,
+              );
+              return bar(
+                m.full_name,
+                total,
+                capacity,
+                total === 1 ? " h" : " h",
+                total > capacity ? "over" : "",
+              );
+            })
+            .join("") || "Invite teammates to see workloads.",
+        ) +
         "</div>",
     );
-    add(
-      panel(
-        "Recent project activity",
-        list(
-          d.activity
-            .slice(0, 5)
-            .map(
-              (e) =>
-                new Date(e.created_at).toLocaleString() +
-                " · " +
-                (e.description || e.event_type),
-            ),
-        ),
-      ),
-    );
+    root.append(secondary);
+    bind("open-timeline", () => openSheet("Timeline"));
     bind("submission", () => openSheet("Ship"));
     assisted(
       "week",
@@ -514,8 +581,9 @@ export function mountBlueprint(ctx) {
   }
   function timeline() {
     add(
-      '<div class="bp-grid">' +
+      '<div class="hero-timeline">' +
         clock() +
+        '</div><div class="bp-grid">' +
         panel(
           "Milestones",
           '<ol class="bp-timeline">' +
@@ -541,6 +609,7 @@ export function mountBlueprint(ctx) {
                   (m.done ? " · Done" : "") +
                   (m.id && leader
                     ? btn("mark-" + m.id, m.done ? "Reopen" : "Complete") +
+                      btn("edit-date-" + m.id, "Edit") +
                       btn("drop-" + m.id, "Delete milestone")
                     : "") +
                   "</li>",
@@ -561,6 +630,21 @@ export function mountBlueprint(ctx) {
       ),
     );
     for (const m of milestones) {
+      bind("edit-date-" + m.id, () =>
+        form(
+          "Edit milestone",
+          fld("name", "Name", "text", m.name) +
+            fld("due", "Due date", "date", m.due),
+          (f) =>
+            result(
+              db
+                .from("milestones")
+                .update({ name: f.get("name"), due: f.get("due") })
+                .eq("id", m.id),
+            ),
+        ),
+      );
+
       bind("mark-" + m.id, async () => {
         await result(
           db.from("milestones").update({ done: !m.done }).eq("id", m.id),
@@ -1065,6 +1149,8 @@ export function mountBlueprint(ctx) {
   function drawMessages() {
     const target = root.querySelector("#bp-messages");
     if (!target) return;
+    const follow =
+      target.scrollHeight - target.scrollTop - target.clientHeight < 100;
     target.innerHTML =
       messages
         .map((m) => {
@@ -1116,12 +1202,17 @@ export function mountBlueprint(ctx) {
                   : "")
               : "";
           return (
-            '<article class="bp-card"><small>' +
-            esc(m.kind) +
+            '<article class="chat-bubble ' +
+            (m.author_id === uid ? "mine" : "theirs") +
+            '"><small>' +
+            esc(m.author_id === uid ? "You" : name(m.author_id)) +
             " · " +
-            esc(name(m.author_id)) +
-            " · " +
-            esc(new Date(m.created_at).toLocaleString()) +
+            esc(
+              new Date(m.created_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            ) +
             "</small><p>" +
             esc(m.body) +
             "</p>" +
@@ -1140,6 +1231,7 @@ export function mountBlueprint(ctx) {
           );
         })
         .join("") || "<p>Start the team conversation.</p>";
+    if (follow) target.scrollTop = target.scrollHeight;
     root.querySelector("#bp-attachments").innerHTML =
       files.map((f) => btn("file-" + f.id, "Open " + f.name)).join("") ||
       "No shared attachments.";
@@ -1208,46 +1300,120 @@ export function mountBlueprint(ctx) {
   const teamNames = () => team.map((m) => m.full_name).join(", ");
   function chat() {
     add(
-      panel(
-        "Team chat",
-        '<div id="bp-messages" role="log" aria-live="polite"></div>' +
-          fld("chat-body", "Message · use @full name", "textarea") +
-          sel("kind", "Post as", [
-            ["text", "Message"],
-            ["decision", "Decision"],
-            ["lesson", "Lesson"],
-            ["standup", "Stand-up"],
-          ]) +
-          fld("attach", "Attach a file · up to 10 MB", "file") +
-          btn("send", "Post message") +
-          btn("voice", "Dictate stand-up") +
-          btn("propose", "Propose task") +
-          btn("poll", "Create poll"),
-      ) +
-        panel(
-          "Shared files",
-          '<div id="bp-attachments"></div><div id="bp-file-preview"></div>',
-        ) +
-        panel(
-          "Discuss & decide",
-          btn("thread", "Summarize thread") +
-            btn("actions", "Find action items") +
-            btn("merge", "Merge stand-ups") +
-            fld("notes", "Shared meeting notes", "textarea") +
-            btn("summarize", "Summarize notes"),
-        ) +
+      '<section class="studio-chat" aria-label="Project chats"><div class="studio-chat-list"><header><h2>Chats</h2></header>' +
+        '<button type="button" class="conversation-link" data-bp="team-thread" aria-current="true"><span class="chat-avatar" aria-hidden="true">#</span><span><strong>' +
+        esc(p.name) +
+        " team</strong><small>Project channel</small></span></button>" +
+        '<div id="studio-private-list"></div></div><div class="studio-chat-thread" id="studio-team-thread">' +
+        "<header><div><h2>" +
+        esc(p.name) +
+        " team</h2><p>" +
+        team.length +
+        ' members</p></div><button type="button" class="mobile-chat-back button subtle" data-bp="chat-back">All chats</button></header>' +
+        '<div id="bp-messages" class="studio-chat-log" role="log" aria-live="polite"></div>' +
+        '<div class="studio-composer"><details><summary>Actions</summary><div class="chat-actions">' +
+        btn("poll", "Create poll") +
+        btn("propose", "Propose task") +
+        btn("edit-task-chat", "Edit task") +
+        (leader ? btn("edit-milestone-chat", "Edit milestone") : "") +
+        btn("report-chat", "Share report") +
+        btn("voice", "Dictate stand-up") +
+        sel("kind", "Post as", [
+          ["text", "Message"],
+          ["decision", "Decision"],
+          ["lesson", "Lesson"],
+          ["standup", "Stand-up"],
+        ]) +
+        '<details><summary>Shared files</summary><div id="bp-attachments"></div></details>' +
+        "<details><summary>Conversation tools</summary>" +
+        btn("thread", "Summarize thread") +
+        btn("actions", "Find action items") +
+        btn("merge", "Merge stand-ups") +
+        fld("notes", "Shared meeting notes", "textarea") +
+        btn("summarize", "Summarize notes") +
         (leader
-          ? panel(
-              "Daily digest",
-              fld(
-                "digest",
-                "Post at (UTC)",
-                "time",
-                p.digest_time?.slice(0, 5),
-              ) + btn("digest", "Save digest time"),
-            )
-          : ""),
+          ? fld(
+              "digest",
+              "Post digest at (UTC)",
+              "time",
+              p.digest_time?.slice(0, 5),
+            ) + btn("digest", "Save digest time")
+          : "") +
+        "</details></div></details>" +
+        '<label class="studio-attach" title="Attach a file"><span aria-hidden="true">＋</span><span class="studio-sr">Attach a file up to 10 MB</span><input type="file" name="attach"></label>' +
+        '<label class="studio-message-field"><span class="studio-sr">Message</span><textarea name="chat-body" rows="1" placeholder="Write a message" maxlength="6000"></textarea></label>' +
+        btn("send", "Send") +
+        '<output id="studio-attachment-name"></output></div><div id="bp-file-preview" aria-live="polite"></div></div><div id="v3-conversation" class="studio-chat-thread" hidden></div></section>',
     );
+    const frame = root.querySelector(".studio-chat");
+    const activateTeam = () => {
+      frame.classList.add("show-thread");
+      root.querySelector("#studio-team-thread").hidden = false;
+      root.querySelector("#v3-conversation").hidden = true;
+      root
+        .querySelector('[data-bp="team-thread"]')
+        .setAttribute("aria-current", "true");
+      root.dispatchEvent(new Event("team-thread-open"));
+    };
+    bind("team-thread", activateTeam);
+    bind("chat-back", () => frame.classList.remove("show-thread"));
+    root.querySelector('[name="attach"]').onchange = (e) => {
+      root.querySelector("#studio-attachment-name").textContent =
+        e.target.files[0]?.name || "";
+    };
+    root.querySelector('[name="chat-body"]').onkeydown = (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        root.querySelector('[data-bp="send"]').click();
+      }
+    };
+    bind("edit-task-chat", () =>
+      modal(
+        "Choose a task",
+        sel(
+          "task",
+          "Task",
+          d.tasks.map((t) => [t.id, t.title]),
+        ),
+        (f) => {
+          root.dataset.editTask = f.get("task");
+        },
+        () => {
+          const task = d.tasks.find((t) => t.id === root.dataset.editTask);
+          if (task) editTask(task);
+        },
+      ),
+    );
+    bind("edit-milestone-chat", () =>
+      modal(
+        "Choose a milestone",
+        sel(
+          "milestone",
+          "Milestone",
+          milestones.map((m) => [m.id, m.name]),
+        ),
+        (f) => {
+          root.dataset.editMilestone = f.get("milestone");
+        },
+        () => {
+          const m = milestones.find((m) => m.id === root.dataset.editMilestone);
+          if (m)
+            form(
+              "Edit milestone",
+              fld("name", "Name", "text", m.name) +
+                fld("due", "Due date", "date", m.due),
+              (f) =>
+                result(
+                  db
+                    .from("milestones")
+                    .update({ name: f.get("name"), due: f.get("due") })
+                    .eq("id", m.id),
+                ),
+            );
+        },
+      ),
+    );
+    bind("report-chat", () => openSheet("Report"));
     bind("digest", async () => {
       await result(
         db
@@ -1288,6 +1454,7 @@ export function mountBlueprint(ctx) {
           throw e;
         }
         root.querySelector("[name=attach]").value = "";
+        root.querySelector("#studio-attachment-name").textContent = "";
       }
       await readChat();
     });
@@ -2058,8 +2225,7 @@ export function mountBlueprint(ctx) {
   else {
     const count = sessionStorage.getItem("chat-count-" + uid + p.id);
     const link = document.getElementById("tab-Chat");
-    if (count && link)
-      link.innerHTML = "<span>05</span>Team chat (" + Number(count) + ")";
+    if (count && link) link.textContent = "Chats (" + Number(count) + ")";
   }
   channel.subscribe();
   return () => {

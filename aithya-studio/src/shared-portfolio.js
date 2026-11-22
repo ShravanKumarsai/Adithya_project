@@ -17,9 +17,23 @@ function safeEvidenceUrl(value) {
   return "";
 }
 
-function portfolioMarkup(profile, entries, escape) {
+function portfolioMarkup(profile, entries, escape, appearance = {}) {
   return (
-    '<article class="portfolio-preview"><header><h1>' +
+    '<article class="portfolio-preview portfolio-theme-' +
+    (appearance.theme || "night") +
+    " portfolio-icon-" +
+    (appearance.icon || "medium") +
+    '"><header><span class="portfolio-avatar" aria-hidden="true">' +
+    escape(
+      profile.display_name
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase(),
+    ) +
+    "</span><h1>" +
     escape(profile.display_name) +
     "</h1>" +
     (profile.headline
@@ -29,6 +43,9 @@ function portfolioMarkup(profile, entries, escape) {
       ? '<p class="portfolio-copy">' + escape(profile.bio) + "</p>"
       : "") +
     "</header>" +
+    (appearance.stats
+      ? '<div class="portfolio-stats">' + appearance.stats + "</div>"
+      : "") +
     entries
       .map((entry) => {
         const evidence = safeEvidenceUrl(entry.proof_url);
@@ -67,15 +84,15 @@ function portfolioMarkup(profile, entries, escape) {
   );
 }
 
-function downloadPortfolio(profile, entries, escape) {
+function downloadPortfolio(profile, entries, escape, appearance) {
   const page =
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
     "<title>" +
     escape(profile.display_name) +
     " — Portfolio</title><style>" +
-    "body{margin:0;background:#f7f6ef;color:#212620;font:17px/1.65 system-ui,sans-serif}main{max-width:760px;padding:45px 24px;margin:auto}header{border-top:4px solid;padding:20px 0}h1,h2,h3,p{margin:0 0 10px}h1{font:normal 3rem Georgia,serif}h2{font:normal 1.8rem Georgia,serif}h3{font-size:1rem;margin-top:18px}section{border-top:1px solid #b8bcae;padding:24px 0}.portfolio-headline,.portfolio-subtitle{color:#425b44}.portfolio-copy{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#254a33}@media print{body{background:white}main{padding:0}section{break-inside:avoid}}" +
+    "body{margin:0;background:#f7f6ef;color:#212620;font:17px/1.65 system-ui,sans-serif}main{max-width:760px;padding:45px 24px;margin:auto}header{border-top:4px solid;padding:20px 0}h1,h2,h3,p{margin:0 0 10px}h1{font:normal 3rem Georgia,serif}h2{font:normal 1.8rem Georgia,serif}h3{font-size:1rem;margin-top:18px}section{border-top:1px solid #b8bcae;padding:24px 0}.portfolio-headline,.portfolio-subtitle{color:#425b44}.portfolio-copy{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#254a33}.portfolio-avatar{display:grid;place-items:center;border:1px solid;border-radius:50%;width:3rem;height:3rem;margin-bottom:1rem;font-weight:700}.portfolio-icon-small .portfolio-avatar{width:2rem;height:2rem}.portfolio-icon-large .portfolio-avatar{width:4.5rem;height:4.5rem}.portfolio-theme-night{background:#121824;color:#eef3fb;padding:24px}.portfolio-theme-blueprint{background:#102b60;color:#edf4ff;padding:24px}.portfolio-theme-night a,.portfolio-theme-blueprint a,.portfolio-theme-night .portfolio-headline,.portfolio-theme-blueprint .portfolio-headline{color:inherit}.portfolio-stats{padding:10px 0}@media print{body{background:white}main{padding:0}section{break-inside:avoid}}" +
     "</style></head><body><main>" +
-    portfolioMarkup(profile, entries, escape) +
+    portfolioMarkup(profile, entries, escape, appearance) +
     "</main></body></html>";
   const url = URL.createObjectURL(
     new Blob([page], { type: "text/html;charset=utf-8" }),
@@ -107,7 +124,7 @@ export async function renderPortfolio({
   const view = main.querySelector("#portfolio-view");
   const open = () => view.isConnected;
   async function load() {
-    const [profile, entries, projects] = await Promise.all([
+    const [profile, entries, projects, logs] = await Promise.all([
       result(
         db.from("portfolios").select("*").eq("user_id", user.id).maybeSingle(),
       ),
@@ -118,9 +135,34 @@ export async function renderPortfolio({
           .eq("user_id", user.id)
           .order("created_at", { ascending: false }),
       ),
-      result(db.from("projects").select("id,name").order("name")),
+      result(db.from("projects").select("id,name,archived_at").order("name")),
+      result(
+        db.from("studio_work_log").select("minutes").eq("user_id", user.id),
+      ).catch(() => []),
     ]);
     if (!open()) return;
+    let appearance = { theme: "night", icon: "medium", showStats: false };
+    try {
+      const v = JSON.parse(
+        localStorage.getItem("aithya.portfolio." + user.id) || "{}",
+      );
+      if (["night", "paper", "blueprint"].includes(v.theme))
+        appearance.theme = v.theme;
+      if (["small", "medium", "large"].includes(v.icon))
+        appearance.icon = v.icon;
+      appearance.showStats = v.showStats === true;
+    } catch {}
+    const active = projects.filter((p) => !p.archived_at).length,
+      hours =
+        Math.round(logs.reduce((n, r) => n + Number(r.minutes), 0) / 6) / 10;
+    const stats =
+      active +
+      " active " +
+      (active === 1 ? "project" : "projects") +
+      " · " +
+      hours +
+      " logged hours";
+    appearance.stats = appearance.showStats ? stats : "";
     const draft = profile || {
       display_name: user.user_metadata?.full_name || "",
       headline: "",
@@ -132,8 +174,11 @@ export async function renderPortfolio({
       '</header><div class="shared-columns"><section><div class="shared-actions">' +
       button("portfolio-profile", "Edit profile", true) +
       button("portfolio-add", "Add case study") +
+      button("portfolio-appearance", "Customize design") +
       (profile ? button("portfolio-download", "Download HTML") : "") +
-      "</div>" +
+      '</div><p class="portfolio-private-stats">' +
+      escape(stats) +
+      "</p>" +
       entries
         .map(
           (entry) =>
@@ -149,10 +194,49 @@ export async function renderPortfolio({
         .join("") +
       '</section><section aria-label="Portfolio preview">' +
       (profile
-        ? portfolioMarkup(profile, entries, escape)
+        ? portfolioMarkup(profile, entries, escape, appearance)
         : '<p class="shared-note">Add your display name and profile to preview the portfolio.</p>') +
       "</section></div>";
     bind("portfolio-back", back);
+    bind("portfolio-appearance", () =>
+      modal(
+        "Portfolio appearance",
+        select(
+          "theme",
+          "Theme",
+          [
+            ["night", "Night"],
+            ["paper", "Paper"],
+            ["blueprint", "Blueprint"],
+          ],
+          appearance.theme,
+        ) +
+          select(
+            "icon",
+            "Profile icon size",
+            [
+              ["small", "Small"],
+              ["medium", "Medium"],
+              ["large", "Large"],
+            ],
+            appearance.icon,
+          ) +
+          '<label><input name="stats" type="checkbox" ' +
+          (appearance.showStats ? "checked" : "") +
+          "> Include project and time totals in the shareable portfolio</label>",
+        (f) =>
+          localStorage.setItem(
+            "aithya.portfolio." + user.id,
+            JSON.stringify({
+              theme: f.get("theme"),
+              icon: f.get("icon"),
+              showStats: f.has("stats"),
+            }),
+          ),
+        load,
+      ),
+    );
+
     bind("portfolio-profile", () =>
       modal(
         "Portfolio profile",
@@ -253,7 +337,7 @@ export async function renderPortfolio({
     bind("portfolio-add", () => edit());
     if (profile)
       bind("portfolio-download", () =>
-        downloadPortfolio(profile, entries, escape),
+        downloadPortfolio(profile, entries, escape, appearance),
       );
     for (const entry of entries) {
       bind("portfolio-edit-" + entry.id, () => edit(entry));

@@ -61,8 +61,16 @@ The collaboration checks in tests/blueprint-access.sql run inside a rolled-back 
 
 The shared workspace groups project sheets into Workspace, Teamwork, Project and Studio. The default Night Studio theme and the light theme both fit narrow screens. Vercel serves an installation manifest for the mobile home-screen experience.
 
-Apply `20261122153000_studio_personal_workspaces.sql` after the blueprint migration to enable personal dashboards, participant-only direct chats, project profiles, opt-in AI credit tracking and integration settings. The project pages detect whether this migration is available. The Vercel runtime role holds the encrypted GitHub token table. Project leaders enter repository-scoped tokens through Settings. Public repositories can continue to load without a token.
+Apply `20261122153000_studio_personal_workspaces.sql` after the blueprint migration to enable personal dashboards, participant-only direct chats, project profiles, opt-in AI credit tracking and integration settings. The project pages detect whether this migration is available. Project leads manage encrypted Gemini and Vercel keys in Settings. Public GitHub repositories remain available through Activity.
 
 The existing `/api/assist` route reads project data with the caller's Supabase permissions. Setup drafts and self-profile analysis use the configured platform Gemini key when the project AI policy allows it. Regular assistance uses the project's encrypted Gemini key. Direct chat summaries require explicit consent and participant access. AI credit tracking uses manually entered allowances and reset windows.
 
-Run `tests/personal-workspaces-access.sql` against an isolated test schema to exercise private threads, shared credits and lead transfers. The test transaction rolls back its records.
+Run `tests/personal-workspaces-access.sql` against an isolated test schema to exercise private threads and shared credits. The test transaction rolls back its records.
+
+## Project reporting and consolidated chats
+
+The Chats sheet opens the team channel and private threads from the same inbox. Team chat actions include shared polls, task proposals, task and milestone edits, and report sharing. Group and private attachments use separate private buckets. Project membership and thread participation are checked in Supabase policies.
+
+The Report sheet computes a project summary from accepted members, tasks, completion timestamps, time entries, successful Studio assistance calls and explicitly shared AI usage windows. Export or share the generated report, or turn your own contribution into a portfolio case study. Usage from external AI accounts comes from member-entered values. Earlier completed tasks without a timestamp have unknown punctuality.
+
+The production migrations follow the blueprint and personal workspace migrations in date order. Run `tests/clean-workspace-access.sql` against a database with those migrations to exercise completion timestamps and privacy. Portfolio appearance preferences are stored in the local browser and applied to downloaded HTML.
