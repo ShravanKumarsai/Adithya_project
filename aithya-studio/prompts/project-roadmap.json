@@ -1,0 +1,6 @@
+{
+  "id": "project-roadmap",
+  "name": "Project roadmap",
+  "description": "Turn the brief into milestones, tasks, and outcomes.",
+  "instruction": "Build a delivery roadmap from discovery through release. Put dependencies in order and map phases to the project’s stated deliverables."
+}

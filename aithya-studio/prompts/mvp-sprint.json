@@ -1,0 +1,6 @@
+{
+  "id": "mvp-sprint",
+  "name": "MVP sprint",
+  "description": "Scope the smallest useful release and identify what to defer.",
+  "instruction": "Plan the smallest end-to-end MVP that addresses the problem and covers mandatory requirements. Put optional scope in a clearly labeled deferred phase and prioritize a usable demo."
+}

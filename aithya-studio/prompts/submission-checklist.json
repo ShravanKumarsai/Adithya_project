@@ -1,0 +1,6 @@
+{
+  "id": "submission-checklist",
+  "name": "Submission checklist",
+  "description": "Work backward from the deadline and prepare the handoff.",
+  "instruction": "Create a submission readiness checklist grouped into verification, packaging, and handoff phases. Cover supplied deliverables and requirements and flag missing evidence for the team to confirm."
+}
