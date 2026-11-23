@@ -13,6 +13,7 @@ const assets = {
   "ui/shared.css":"shared.css",
   "ui/print.css":"print.css",
   "scripts/claude-credit-sync.py":"claude-credit-sync.txt",
+  "scripts/ai-credit-connector.py":"ai-credit-connector.txt",
   "ui/shared.bundle.js":"shared.bundle.js",
   "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs":"rulebook-pdf.mjs",
   "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs":"rulebook-pdf.worker.mjs",

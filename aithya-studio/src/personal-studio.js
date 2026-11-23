@@ -113,14 +113,14 @@ export function mountPersonalStudio(ctx) {
   const skills = [["", "General"], ...studioSkills.map((s) => [s, s])];
   let channel,
     timer,
-    claudeTimer,
-    claudeRequest,
+    liveCreditsTimer,
+    liveCreditsRequest,
     selected,
     details,
     threads = [],
     markers = [],
     credits = [],
-    claude = [],
+    liveCredits = [],
     messages = [];
   function add(html) {
     root.insertAdjacentHTML("beforeend", html);
@@ -507,6 +507,7 @@ export function mountPersonalStudio(ctx) {
           "number",
           'min="0.25" max="720" step="0.01" required',
         ) +
+        field("exact_reset", "Exact reset time (optional)", "", "datetime-local") +
         yes(
           "shared",
           "Share this account and its label with teammates",
@@ -519,6 +520,9 @@ export function mountPersonalStudio(ctx) {
           !account ||
           values.has("restart") ||
           Date.parse(account.reset_at) <= Date.now();
+        const exactReset = values.get("exact_reset") ? new Date(values.get("exact_reset")) : null;
+        if (exactReset && (!Number.isFinite(+exactReset) || +exactReset <= Date.now()))
+          throw Error("Choose a future reset time.");
         const row = {
           project_id: id,
           user_id: user,
@@ -528,9 +532,9 @@ export function mountPersonalStudio(ctx) {
           allowance: Number(values.get("allowance")),
           used: Number(values.get("used")),
           window_hours: window,
-          reset_at: reset
+          reset_at: exactReset?.toISOString() || (reset
             ? new Date(Date.now() + window * 3600000).toISOString()
-            : account.reset_at,
+            : account.reset_at),
           shared: values.has("shared"),
         };
         return account
@@ -558,7 +562,7 @@ export function mountPersonalStudio(ctx) {
                 "m " +
                 (seconds % 60) +
                 "s"
-              : "Refreshed";
+              : "Scheduled reset reached";
             return (
               '<tr><th scope="row">' +
               escape(c.tool) +
@@ -566,18 +570,10 @@ export function mountPersonalStudio(ctx) {
               "<small>" +
               escape(name(c.user_id)) +
               "</small></th><td>" +
-              activeUsed(c) +
-              " / " +
-              c.allowance +
-              " " +
-              escape(c.unit.toLowerCase()) +
-              '<progress max="' +
-              c.allowance +
-              '" value="' +
-              Math.min(c.allowance, activeUsed(c)) +
-              '" aria-label="' +
-              escape(c.tool) +
-              ' usage"></progress></td>' +
+              (seconds ? c.used + " / " + c.allowance + " " + escape(c.unit.toLowerCase()) +
+                '<progress max="' + c.allowance + '" value="' + Math.min(c.allowance, c.used) +
+                '" aria-label="' + escape(c.tool) + ' usage"></progress>' : "Update usage") +
+              "</td>" +
               "<td>" +
               countdown +
               (c.user_id === user
@@ -609,7 +605,7 @@ export function mountPersonalStudio(ctx) {
     }
   }
   function creditSummary() {
-    const ordered = [...credits].sort(
+    const ordered = credits.filter((c) => Date.parse(c.reset_at) > Date.now()).sort(
       (a, b) => available(b) / b.allowance - available(a) / a.allowance,
     );
     const low = ordered.filter((c) => available(c) / c.allowance <= 0.15);
@@ -645,78 +641,90 @@ export function mountPersonalStudio(ctx) {
       "</div>"
     );
   }
-  async function loadClaudeCredits() {
-    claude = await result(
+  async function loadLiveCredits() {
+    liveCredits = await result(
       db.from("studio_claude_connections")
-        .select("id,user_id,shared,studio_claude_windows(window_key,used,reset_at,synced_at)")
+        .select("id,user_id,shared,provider,studio_claude_windows(window_key,used,reset_at,synced_at)")
         .eq("project_id", id),
     );
   }
-  function claudeSetup(existing) {
-    let token;
+  const providers = {claude: "Claude Code", codex: "ChatGPT · Codex"};
+  const windowLabels = {
+    five_hour: "5-hour limit", seven_day: "Weekly limit",
+    primary: "Primary limit", secondary: "Secondary limit",
+  };
+  function connectorSetup(provider, existing) {
+    const title = providers[provider];
+    const filename = "aithya-" + provider + "-setup.py";
     form(
-      existing ? "Replace Claude sync token" : "Connect Claude Code",
-      "<p>Use Claude Code signed in to an eligible Claude subscription. The connector sends the usage percentage and reset time for each window.</p>" +
-        (existing ? "<p>Generating a new token revokes your current token.</p>" : "") +
-        '<p>Save to generate your personal sync token.</p>',
-      async () => { token = await rpc("connect_studio_claude", {p_project: id}); },
+      "Connect " + title,
+      "<p>Sign in to " + escape(title) + " on your computer first. Download and run your personal setup file once to start syncing. Keep the file private.</p>" +
+        '<p>On macOS or Linux, run <code>python3 ~/Downloads/' + filename + '</code> after downloading.</p>' +
+        (provider === "codex" ? "<p>Keep the terminal open while you want Codex usage to sync.</p>" :
+          "<p>Restart Claude Code and send a message after setup.</p>") +
+        (existing ? "<p>A new download revokes the previous connector for this project.</p>" : ""),
       async () => {
-        await refresh();
-        const settings = JSON.stringify({statusLine: {
-          type: "command",
-          command: 'AITHYA_CLAUDE_SYNC_TOKEN=' + token + ' python3 "$HOME/.claude/aithya-credit-sync.py"',
-          refreshInterval: 60,
-        }}, null, 2);
-        form(
-          "Set up the Claude Code connector",
-          '<ol><li><a href="/claude-credit-sync.txt" download="aithya-credit-sync.py">Download the connector</a> and save it as <code>~/.claude/aithya-credit-sync.py</code>.</li>' +
-            '<li>On macOS or Linux, merge the <code>statusLine</code> entry below into <code>~/.claude/settings.json</code>. Keep the token private. If you already use a status line, back up that entry first.</li>' +
-            '<li>Start Claude Code and send a message to load your usage windows.</li></ol>' +
-            '<label>Claude Code settings<textarea rows="8" readonly spellcheck="false">' +
-            escape(settings) + '</textarea></label>',
-          async () => {},
-          async () => {},
-        );
-        document.querySelector("#shared-form button.primary").textContent = "Done";
+        const response = await fetch("/ai-credit-connector.txt");
+        if (!response.ok) throw Error("Could not download the connector. Try again.");
+        const source = await response.text();
+        const placeholder = "PAIRING = None";
+        if (!source.includes(placeholder)) throw Error("The connector download is unavailable.");
+        const token = await rpc("connect_studio_ai_provider", {p_project: id, p_provider: provider});
+        const pairing = JSON.stringify({provider, project: id, token});
+        const script = source.replace(placeholder, () => "PAIRING = " + pairing);
+        const href = URL.createObjectURL(new Blob([script], {type: "text/x-python"}));
+        const link = Object.assign(document.createElement("a"), {href, download: filename});
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 30000);
       },
+      refresh,
     );
+    document.querySelector("#shared-form button.primary").textContent = "Download setup file";
   }
-  function drawClaude(target, ownOnly, reload) {
-    const mine = claude.find((c) => c.user_id === user);
+  function drawLiveCredits(target, ownOnly, reload) {
+    const mine = liveCredits.filter((c) => c.user_id === user);
     const now = Date.now();
-    const visible = claude.filter((c) => !ownOnly || c.user_id === user);
+    const visible = liveCredits.filter((c) => !ownOnly || c.user_id === user);
     target.innerHTML = panel(
-      "Live Claude usage",
-      '<p>Connect Claude Code to see your subscription usage and get refill alerts in the notification bell.</p>' +
-        button("claude-connect", mine ? "Replace sync token" : "Connect Claude Code") +
-        (mine ? button("claude-sharing", mine.shared ? "Make private" : "Share with team") +
-          button("claude-disconnect", "Disconnect") : "") +
-        (visible.length ? '<div class="studio-table-wrap" tabindex="0" aria-label="Claude quota windows"><table class="studio-table credits-table"><thead><tr><th scope="col">Member</th><th scope="col">Window</th><th scope="col">Usage</th><th scope="col">Reset</th></tr></thead><tbody>' +
+      "Live usage",
+      '<p>Connect Claude Code or Codex for real usage and reset alerts. Codex tracks its own ChatGPT allowance.</p>' +
+        Object.entries(providers).map(([provider, label]) =>
+          button("provider-" + provider, (mine.some((c) => c.provider === provider) ? "Set up again · " : "Connect ") + label)
+        ).join(" ") +
+        (visible.length ? '<div class="studio-table-wrap" tabindex="0" aria-label="Live AI quota windows"><table class="studio-table credits-table"><thead><tr><th scope="col">Account</th><th scope="col">Window</th><th scope="col">Usage</th><th scope="col">Reset</th></tr></thead><tbody>' +
           visible.map((connection) => {
             const windows = connection.studio_claude_windows;
-            if (!windows.length) return '<tr><th scope="row">' + escape(name(connection.user_id)) +
-              '</th><td colspan="3">Waiting for Claude Code to send its first reading.</td></tr>';
+            const account = '<th scope="row">' + escape(providers[connection.provider]) +
+              '<small>' + escape(name(connection.user_id)) + '</small></th>';
+            if (!windows.length) return '<tr>' + account + '<td colspan="3">Waiting for the first reading.</td></tr>';
             return [...windows].sort((a, b) => a.window_key.localeCompare(b.window_key)).map((reading) => {
               const ended = Date.parse(reading.reset_at) <= now;
               const fresh = now - Date.parse(reading.synced_at) < 180000;
-              const label = reading.window_key === "five_hour" ? "5-hour limit" : "Weekly limit";
-              return '<tr><th scope="row">' + escape(name(connection.user_id)) + '</th><td>' + label +
+              const label = windowLabels[reading.window_key];
+              return '<tr>' + account + '<td>' + label +
                 '</td><td>' + (ended ? 'Awaiting next reading' : escape(reading.used) + '% used' +
                   '<progress max="100" value="' + escape(reading.used) + '" aria-label="' + label + ' used"></progress>') +
                 '<small>' + escape((ended || !fresh ? "Last synced " : "Live · synced ") + when(reading.synced_at)) +
                 '</small></td><td>' + (ended ? 'Reset time reached' : escape(when(reading.reset_at))) + '</td></tr>';
             }).join("");
-          }).join("") + '</tbody></table></div>' : ""),
+          }).join("") + '</tbody></table></div>' : "") +
+        mine.map((c) => '<div class="credit-actions">' + escape(providers[c.provider]) + ' ' +
+          button("sharing-" + c.id, c.shared ? "Make private" : "Share with team") +
+          button("disconnect-" + c.id, "Disconnect") + '</div>').join(""),
     );
-    bind("claude-connect", () => claudeSetup(mine), target);
-    if (mine) {
-      bind("claude-sharing", async () => {
-        await result(db.from("studio_claude_connections").update({shared: !mine.shared}).eq("id", mine.id));
+    Object.keys(providers).forEach((provider) =>
+      bind("provider-" + provider, () => connectorSetup(provider, mine.some((c) => c.provider === provider)), target)
+    );
+    for (const connection of mine) {
+      bind("sharing-" + connection.id, async () => {
+        await result(db.from("studio_claude_connections").update({shared: !connection.shared}).eq("id", connection.id));
         await reload();
       }, target);
-      bind("claude-disconnect", () => form("Disconnect Claude Code",
-        "<p>This revokes the sync token and removes the Claude usage readings from this project.</p>",
-        () => result(db.from("studio_claude_connections").delete().eq("id", mine.id)), reload), target);
+      bind("disconnect-" + connection.id, () => form("Disconnect " + providers[connection.provider],
+        "<p>This revokes the connector and removes its readings from this project.</p>",
+        () => result(db.from("studio_claude_connections").delete().eq("id", connection.id)), reload), target);
     }
   }
   async function showCredits(own = false) {
@@ -725,9 +733,9 @@ export function mountPersonalStudio(ctx) {
     add('<div id="v3-live-credits"></div>');
     add(
       panel(
-        own ? "Personal AI accounts" : "AI credits",
-        "<p>Manually tracked usage. Share only the accounts you choose.</p>" +
-          button("account", "Add AI account") +
+        own ? "Personal AI accounts" : "Manual tracking",
+        "<p>Track ChatGPT chat, Gemini, Copilot, or any tool. Enter usage and a window length to get a reset reminder.</p>" +
+          button("account", "Add manual tracker") +
           '<div id="v3-credit-summary"></div><div id="v3-credit-rows"></div>',
       ),
     );
@@ -741,23 +749,23 @@ export function mountPersonalStudio(ctx) {
     };
     draw();
     const live = root.querySelector("#v3-live-credits");
-    const reloadClaude = async () => {
-      if (claudeRequest || !live.isConnected) return;
-      claudeRequest = loadClaudeCredits();
+    const reloadLiveCredits = async () => {
+      if (liveCreditsRequest || !live.isConnected) return;
+      liveCreditsRequest = loadLiveCredits();
       try {
-        await claudeRequest;
+        await liveCreditsRequest;
         if (live.isConnected && (!live.contains(document.activeElement) || document.activeElement.disabled))
-          drawClaude(live, own, reloadClaude);
+          drawLiveCredits(live, own, reloadLiveCredits);
       } catch {
         if (live.isConnected && !live.hasChildNodes())
-          live.innerHTML = panel("Live Claude usage", "<p>Live usage could not load. Retrying shortly.</p>");
+          live.innerHTML = panel("Live usage", "<p>Live usage could not load. Retrying shortly.</p>");
       } finally {
-        claudeRequest = null;
+        liveCreditsRequest = null;
       }
     };
-    reloadClaude();
-    claudeTimer = setInterval(() => {
-      if (!document.hidden) reloadClaude();
+    reloadLiveCredits();
+    liveCreditsTimer = setInterval(() => {
+      if (!document.hidden) reloadLiveCredits();
     }, 15000);
     timer = setInterval(draw, 1000);
     bind("account", () => accountEditor());
@@ -1302,7 +1310,7 @@ export function mountPersonalStudio(ctx) {
   }
   return () => {
     clearInterval(timer);
-    clearInterval(claudeTimer);
+    clearInterval(liveCreditsTimer);
     if (channel) db.removeChannel(channel);
   };
 }

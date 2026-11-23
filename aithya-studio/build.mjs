@@ -31,6 +31,7 @@ entries.push([
   "/claude-credit-sync.txt",
   ["text/plain; charset=utf-8", await readFile("scripts/claude-credit-sync.py", "utf8")],
 ]);
+entries.push(["/ai-credit-connector.txt", ["text/plain; charset=utf-8", await readFile("scripts/ai-credit-connector.py", "utf8")]]); 
 await mkdir("dist/server", { recursive: true });
 await mkdir("dist/.openai", { recursive: true });
 await cp(".openai/hosting.json", "dist/.openai/hosting.json");

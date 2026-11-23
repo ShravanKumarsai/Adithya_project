@@ -90,3 +90,11 @@ Open a shared project, go to **AI credits**, and choose **Connect Claude Code**.
 For eligible Claude subscriptions, the connector reads the 5-hour and weekly usage windows that Claude Code reports through its official status line. Claude Code reports them after its first response. Once a window ends, Aithya shows that its reset time has passed and waits for the next provider reading. The notification bell uses the provider-reported timestamp, even with Claude Code or the browser closed. Refill alerts are private and can be turned off in project Settings. Other tools can be tracked manually.
 
 [Claude Code status-line documentation](https://code.claude.com/docs/en/statusline#rate-limit-usage)
+
+### AI credits connectors
+
+**AI credits → Live usage** offers downloadable setup for Claude Code and ChatGPT-signed-in Codex CLI. On macOS/Linux, run the personalized download with Python 3.8+ using the command in the setup dialog. Claude setup updates the status line, backs up user settings once, and preserves an existing custom status-line command. Codex syncs once a minute while the connector terminal is open. The connector sends only quota percentages and reset timestamps, and each project controls who can view its readings. Delete the personal installer after setup. Disconnecting in Aithya revokes its token.
+
+Codex readings cover the Codex allowance. For regular ChatGPT chats, Gemini, Copilot, or another tool, use **Add manual tracker** to record messages, requests, or tokens and set a scheduled reset reminder.
+
+[Codex App Server account API](https://developers.openai.com/codex/app-server/#accounts)
