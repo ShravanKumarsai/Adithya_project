@@ -98,3 +98,15 @@ For eligible Claude subscriptions, the connector reads the 5-hour and weekly usa
 Codex readings cover the Codex allowance. For regular ChatGPT chats, Gemini, Copilot, or another tool, use **Add manual tracker** to record messages, requests, or tokens and set a scheduled reset reminder.
 
 [Codex App Server account API](https://developers.openai.com/codex/app-server/#accounts)
+
+## AI-first redesign foundation
+
+The first review phase replaces the Worker’s source splicing with module imports, consolidates the active styles into `ui/shared.css`, and adds a responsive workspace shell. Today uses task assignments, dependencies, due dates and the private notification feed. Its next action is selected from workspace data. External AI generation remains separate.
+
+### Legacy data
+
+The unused notebook frontend and its API routes are retired. The historical D1 migrations and their `project_notes` and `workspace_projects` tables are retained. The Vercel equivalents and stored notebook files are retained too. No DROP, DELETE or data migration is part of this change. If legacy records are needed, export the tables and file objects through the hosting provider’s authenticated dashboard, confirm the exported row and file counts, and keep the originals until the export is verified. Confirm a retention or removal plan before changing these stores.
+
+### Tests
+
+Run `npm ci`, `npm run lint`, `npm test`, and `npm run build && node vercel-build.mjs`. Then run `npx playwright install chromium` and `npm run test:browser`. The browser test uses fixtures for Supabase and integrations. It exercises the redesigned mobile shell, keyboard tabs and command palette, rulebook review, and Today. It does not send email or consume provider usage.

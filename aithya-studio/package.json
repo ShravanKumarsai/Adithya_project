@@ -3,7 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "lint": "eslint .",
+    "test": "node --test tests/*.test.mjs",
+    "format": "prettier --write eslint.config.js server/http.mjs server/quota.mjs server/github.mjs src/studio-ui.js src/wizard-policy.js tests/*.test.mjs tests/workspace-smoke.mjs",
+    "test:browser": "node tests/workspace-smoke.mjs",
+    "check:server": "node --check dist/server/index.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.119.2",
@@ -11,6 +16,9 @@
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "eslint": "9.39.1",
+    "playwright": "1.60.0",
+    "prettier": "3.6.2"
   }
 }

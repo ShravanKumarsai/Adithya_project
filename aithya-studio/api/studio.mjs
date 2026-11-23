@@ -1,13 +1,14 @@
+import { rulebookLimit } from "../src/lib/rulebook-limits.js";
 import worker from "../dist/server/index.js";
 import {supabaseUrl, supabasePublishableKey} from "../src/lib/supabase-config.js";
-import {DB, FILES, storeScanPart, consumeScan} from "../server/vercel-storage.mjs";
+import {DB, storeScanPart, consumeScan} from "../server/vercel-storage.mjs";
 
 const routes = new Set([
   "assist", "github/token", "setup/rulebook", "setup/rulebook/part", "planning", "planning/key", "vercel/token",
-  "activity", "notebook", "documents", "projects", "profile",
+  "activity", "profile",
 ]);
 const maxBody = 4 * 1024 * 1024;
-const env = {...process.env, DB, FILES};
+const env = {...process.env, DB};
 const scanMime = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const json = (error, status) => Response.json({error}, {
@@ -78,7 +79,7 @@ async function handle(req) {
       if (rows.length !== count || rows.some((row, index) => row.part !== index))
         return json("Incomplete rulebook upload. Choose the file again.", 400);
       options.body = Buffer.concat(rows.map(row => row.bytes));
-      if (options.body.length > 8 * 1024 * 1024) return json("Choose a file up to 8 MB.", 413);
+      if (options.body.length > rulebookLimit) return json("Choose a file up to 8 MB.", 413);
       headers.set("content-length", String(options.body.length));
     }
   }

@@ -1,3 +1,4 @@
+import { rulebookLimit } from "./lib/rulebook-limits.js";
 const fieldDefinitions = [
   [
     "project",
@@ -328,7 +329,7 @@ export function applyRulebookSuggestions(draft, suggestions) {
 }
 
 export async function readRulebook(file) {
-  if (file.size > 10 * 1024 * 1024) throw Error("Choose a file under 10 MB.");
+  if (file.size > rulebookLimit) throw Error("Choose a rulebook up to 8 MB.");
   if (/\.(txt|md)$/i.test(file.name))
     return (await file.text()).slice(0, 120000);
   if (!/\.pdf$/i.test(file.name))

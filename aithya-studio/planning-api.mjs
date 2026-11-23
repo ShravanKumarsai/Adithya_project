@@ -1,10 +1,19 @@
+import { github, isRepo } from "./server/github.mjs";
+import { json, timedFetch } from "./server/http.mjs";
+import { dailyLimits, quotaReservations } from "./server/quota.mjs";
+import mvpSprint from "./prompts/mvp-sprint.json" with { type: "json" };
+import roadmap from "./prompts/project-roadmap.json" with { type: "json" };
+import submission from "./prompts/submission-checklist.json" with { type: "json" };
+const vercelPattern = /^prj_[A-Za-z0-9]{8,64}$/;
+const planningTemplates = [mvpSprint, roadmap, submission];
+
 import {
   supabaseUrl,
   supabasePublishableKey,
 } from "./src/lib/supabase-config.js";
 
-const defaultGeminiModel = "gemini-3.5-flash-lite";
-const uuidPattern =
+export const defaultGeminiModel = "gemini-3.5-flash-lite";
+export const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const planSchema = {
   type: "object",
@@ -33,9 +42,9 @@ const planSchema = {
     risks: { type: "array", maxItems: 5, items: { type: "string" } },
   },
 };
-const clip = (value, max) =>
+export const clip = (value, max) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
-const strings = (values, count, max) =>
+export const strings = (values, count, max) =>
   Array.isArray(values)
     ? values
         .slice(0, count)
@@ -43,7 +52,7 @@ const strings = (values, count, max) =>
         .filter(Boolean)
     : [];
 
-function normalizePlan(value) {
+export function normalizePlan(value) {
   const summary = clip(value?.summary, 1200);
   const phases = Array.isArray(value?.phases)
     ? value.phases
@@ -60,7 +69,7 @@ function normalizePlan(value) {
   return { summary, phases, risks: strings(value.risks, 5, 280) };
 }
 
-function permittedGeminiModel(policy, configuredModel) {
+export function permittedGeminiModel(policy, configuredModel) {
   const models = (policy.permitted_models || []).map((value) =>
     value.trim().toLowerCase(),
   );
@@ -115,11 +124,11 @@ function integrationTable(provider) {
   return provider==="github"?"project_github_tokens":"project_gemini_keys";
 }
 
-async function projectGeminiKey(env, projectId, provider) {
+export async function projectGeminiKey(env, projectId, provider) {
   return env.DB.prepare("SELECT nonce,ciphertext FROM "+integrationTable(provider)+" WHERE project_id=?").bind(projectId).first();
 }
 
-async function revealIntegration(env,projectId,provider,stored) {
+export async function revealIntegration(env,projectId,provider,stored) {
   const namespace=provider==="gemini"?projectId:provider+":"+projectId;
   return new TextDecoder().decode(await crypto.subtle.decrypt(
     projectKeyCipher(namespace,decodeBytes(stored.nonce)),await encryptionKey(env),decodeBytes(stored.ciphertext)
@@ -180,7 +189,7 @@ async function planningAccess(request, projectId) {
   return { project, get };
 }
 
-async function projectGeminiKeyResponse(request, env, url, integration = "gemini") {
+export async function projectGeminiKeyResponse(request, env, url, integration = "gemini") {
   const provider=integration===true?"vercel":integration;
   const vercel=provider==="vercel";
   const table = integrationTable(provider);
@@ -260,7 +269,7 @@ async function projectGeminiKeyResponse(request, env, url, integration = "gemini
   }
 }
 
-async function planningResponse(request, env, url, user) {
+export async function planningResponse(request, env, url, user) {
   if (request.method !== "POST")
     return json({ error: "Use the planning form." }, 405);
   if (
@@ -270,6 +279,7 @@ async function planningResponse(request, env, url, user) {
     return json({ error: "Open planning from your project." }, 403);
   }
   let body;
+  const quota = quotaReservations(env.DB);
   try {
     const raw = await request.text();
     if (raw.length > 2048)
@@ -361,17 +371,8 @@ async function planningResponse(request, env, url, user) {
     );
     const requirements = await requirementsResponse.json();
     const [legacy] = await legacyResponse.json();
-    const day = new Date().toISOString().slice(0, 10);
-    const quota = await env.DB.prepare(
-      "INSERT INTO planning_rate(account_id,day,attempts) VALUES(?,?,1) ON CONFLICT(account_id,day) DO UPDATE SET attempts=attempts+1 WHERE attempts<12",
-    )
-      .bind(user.id, day)
-      .run();
-    if (!quota.meta.changes)
-      return json(
-        { error: "Today's limit of 12 planning requests has been reached." },
-        429,
-      );
+    if (!await quota.reserve(user.id, dailyLimits.plan))
+      return json(quota.exceeded("Today's planning limit has been reached.", dailyLimits.plan), 429);
 
     const context = {
       name: clip(project.name, 200),
@@ -464,6 +465,7 @@ async function planningResponse(request, env, url, user) {
           502,
         );
       }
+      quota.commit();
       return json({ plan, model });
     } catch {
       return json(
@@ -476,5 +478,7 @@ async function planningResponse(request, env, url, user) {
       { error: "Planning could not reach its providers. Please try again." },
       502,
     );
+  } finally {
+    await quota.refund();
   }
 }

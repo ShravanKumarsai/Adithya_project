@@ -1,4 +1,9 @@
-const rulebookLimit = 8 * 1024 * 1024;
+import { json, timedFetch } from "./server/http.mjs";
+import { dailyLimits, quotaReservations } from "./server/quota.mjs";
+import { supabasePublishableKey, supabaseUrl } from "./src/lib/supabase-config.js";
+import { rulebookLimit } from "./src/lib/rulebook-limits.js";
+import setupRulebookPrompt from "./setup-prompts/rulebook.json" with { type: "json" };
+
 const rulebookMedia = new Set([
   "application/pdf",
   "image/jpeg",
@@ -120,7 +125,7 @@ async function requestGeminiRulebook(env, mime, bytes) {
   );
 }
 
-async function setupRulebookResponse(request, env, url, user) {
+export async function setupRulebookResponse(request, env, url, user) {
   if (request.method === "GET")
     return json({ configured: Boolean(env.GEMINI_SETUP_API_KEY) });
   if (request.method !== "POST")
@@ -142,6 +147,7 @@ async function setupRulebookResponse(request, env, url, user) {
   if (!rulebookMedia.has(mime))
     return json({ error: "Use a PDF, JPEG, PNG, or WebP file." }, 415);
   let stage = "session";
+  const quota = quotaReservations(env.DB);
   try {
     const identity = await timedFetch(supabaseUrl + "/auth/v1/user", {
       headers: { apikey: supabasePublishableKey, authorization },
@@ -157,25 +163,10 @@ async function setupRulebookResponse(request, env, url, user) {
     if (!rulebookMediaMatches(bytes, mime))
       return json({ error: "The file contents do not match its format." }, 415);
     stage = "quota";
-    const day = new Date().toISOString().slice(0, 10);
-    const reserve = (key, limit) =>
-      env.DB.prepare(
-        "INSERT INTO planning_rate(account_id,day,attempts) VALUES(?,?,1) ON CONFLICT(account_id,day) DO UPDATE SET attempts=attempts+1 WHERE attempts<?",
-      )
-        .bind(key, day, limit)
-        .run();
-    const personalQuota = await reserve("setup:account:" + user.id, 6);
-    if (!personalQuota.meta.changes)
-      return json(
-        { error: "Your daily limit of six rulebook scans has been reached." },
-        429,
-      );
-    const sharedQuota = await reserve("setup:site", 80);
-    if (!sharedQuota.meta.changes)
-      return json(
-        { error: "The site's daily scanning limit has been reached." },
-        429,
-      );
+    if (!await quota.reserve("setup:account:" + user.id, dailyLimits.scanUser))
+      return json(quota.exceeded("Your daily rulebook scan limit has been reached.", dailyLimits.scanUser), 429);
+    if (!await quota.reserve("setup:site", dailyLimits.scanSite))
+      return json(quota.exceeded("The site's daily scanning limit has been reached.", dailyLimits.scanSite), 429);
     stage = "gemini";
     const response = await requestGeminiRulebook(env, mime, bytes);
     if (response.status === 429)
@@ -225,6 +216,8 @@ async function setupRulebookResponse(request, env, url, user) {
         label,
         value: value.trim().slice(0, 1200),
       }));
+    if (!fields.some(({ value }) => value)) return json({ error: "No usable details were found. Try a clearer file." }, 422);
+    quota.commit();
     return json({ fields });
   } catch (error) {
     const failure =
@@ -247,5 +240,7 @@ async function setupRulebookResponse(request, env, url, user) {
         "Gemini returned unreadable setup details. Retry with a clearer photo or smaller PDF.",
     };
     return json({ error: messages[stage] }, failure === "timeout" ? 504 : 502);
+  } finally {
+    await quota.refund();
   }
 }

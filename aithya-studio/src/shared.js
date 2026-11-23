@@ -1,8 +1,10 @@
+import { button, escape, skeleton, tabButton, tabKeys } from "./studio-ui.js";
+import { collectWizardPolicy } from "./wizard-policy.js";
 import {applyStudioAppearance,studioAppearance} from "./studio-appearance.js";
 import {mountReport} from "./studio-report.js";
 import {mountBlueprint} from "./blueprint.js";
 import {studioSkills} from "./assist-contract.js";
-import { insightsView } from "./project-insights.js";
+import { todayView } from "./project-insights.js";
 import { openRulebookImport } from "./shared-rulebook.js";
 import { notifications } from "./shared-notifications.js";
 import { renderPortfolio } from "./shared-portfolio.js";
@@ -10,7 +12,7 @@ import { supabase as db } from "./lib/supabase.js";
 
 let detachSheet=()=>{};
 const themeButton=document.querySelector("#blueprint-theme");
-const themes=["dark","light","blueprint"];
+const themes=["dark","light","blueprint","system"];
 const nextTheme=theme=>themes[(themes.indexOf(theme)+1)%themes.length];
 function setTheme(theme){
   applyStudioAppearance({...studioAppearance(),theme});
@@ -18,29 +20,16 @@ function setTheme(theme){
 }
 applyStudioAppearance();
 setTheme(studioAppearance().theme);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (studioAppearance().theme === "system") setTheme("system");
+});
 themeButton.onclick=()=>{
-  const theme=nextTheme(document.documentElement.dataset.blueprint);
+  const theme=nextTheme(studioAppearance().theme);
   setTheme(theme);
   localStorage.setItem("aithya.theme",theme);
 };
 const main = document.getElementById("shared-main");
 const dialog = document.getElementById("shared-dialog");
-const escape = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (char) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        char
-      ],
-  );
-const button = (id, label, primary = false) =>
-  '<button type="button" class="button ' +
-  (primary ? "primary" : "subtle") +
-  '" id="' +
-  id +
-  '">' +
-  escape(label) +
-  "</button>";
 const field = (name, label, value = "", type = "text", required = false) =>
   '<label for="f-' +
   name +
@@ -130,7 +119,7 @@ let draftChanges = 0,
 const pendingToken = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (pendingToken) {
   sessionStorage.setItem("aithya.shared.invite", pendingToken);
-  history.replaceState(null, "", location.pathname);
+  history.replaceState(null, "", location.pathname + location.search);
 }
 document.getElementById("shared-close").onclick = () => dialog.close();
 function notify(message) {
@@ -298,39 +287,17 @@ async function workspace() {
     ? button("signout", "Sign out")
     : "";
   notificationPanel.refresh();
-  const portfolioButton = document.getElementById("portfolio-nav");
-  portfolioButton.hidden = !session;
-  portfolioButton.onclick = async () => {
-    if (!session) return;
-    if (wizard && draftChanges > savedChanges) {
-      try {
-        await queueDraft();
-      } catch (error) {
-        notify(error.message);
-        return;
-      }
-    }
-    detachSheet();
-    generation++;
-    project = null;
-    wizard = null;
-    clearTimeout(saveTimer);
-    return renderPortfolio({
-      db,
-      main,
-      user: session.user,
-      result,
-      escape,
-      button,
-      field,
-      area,
-      select,
-      bind,
-      modal,
-      notify,
-      back: workspace,
-    });
-  };
+  const route = new URL(location.href);
+  const activeRoute = route.searchParams.get("view") || (route.pathname === "/" ? "today" : "projects");
+  const nav = document.querySelector("#studio-global-nav");
+  nav.hidden = !session;
+  document.querySelector("#studio-command").hidden = !session;
+  for (const link of nav.querySelectorAll("a")) {
+    const destination = new URL(link.href);
+    const page = destination.searchParams.get("view") || (destination.pathname === "/" ? "today" : "projects");
+    if (page === activeRoute) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
   bind("signout", async () => {
     await result(db.auth.signOut());
   });
@@ -342,9 +309,39 @@ async function workspace() {
     await inviteScreen();
     return;
   }
-  main.innerHTML = empty("Loading your projects…");
+  if (activeRoute === "portfolio") {
+    await renderPortfolio({db, main, user:session.user, result, escape, button, field, area, select,
+      bind, modal, notify, back:() => navigate("/shared")});
+    return;
+  }
+  if (activeRoute === "settings") {
+    main.innerHTML = '<header class="shared-header"><h1>Settings</h1></header>' +
+      '<section class="bp-panel"><h2>Appearance</h2>' +
+      select("global-theme", "Theme", [["system","Use device setting"],["light","Light"],["dark","Midnight"],["blueprint","Blueprint"]], studioAppearance().theme) +
+      '</section>';
+    document.getElementById("f-global-theme").onchange = (event) => setTheme(event.target.value);
+    return;
+  }
+  main.innerHTML = skeleton("Loading your workspace");
   try {
-    const insights = location.pathname === "/";
+    const insights = activeRoute === "today";
+    if (activeRoute === "usage") {
+      const [projects, accounts, connections] = await Promise.all([
+        result(db.from("projects").select("id,name,archived_at").is("archived_at",null)),
+        result(db.from("studio_ai_accounts").select("project_id").eq("user_id", session.user.id)),
+        result(db.from("studio_claude_connections").select("project_id,provider").eq("user_id", session.user.id)),
+      ]);
+      if (version !== generation) return;
+      main.innerHTML = '<header class="shared-header"><h1>AI usage</h1></header><section class="project-list">' +
+        (projects.map((item) => {
+          const connected = connections.filter((c) => c.project_id === item.id).length;
+          const manual = accounts.filter((c) => c.project_id === item.id).length;
+          return '<article class="project-entry"><div><h2>' + escape(item.name) + '</h2><p>' +
+            connected + ' live · ' + manual + ' manual</p></div><a class="button subtle" data-studio-route href="/shared?project=' +
+            encodeURIComponent(item.id) + '&amp;sheet=AI+credits">AI credits</a></article>';
+        }).join("") || '<p>No projects yet.</p>') + '</section>';
+      return;
+    }
     const [projects, drafts, totals] = await Promise.all([
       result(
         db
@@ -363,15 +360,35 @@ async function workspace() {
     ]);
     if (version !== generation) return;
     if (insights) {
-      main.innerHTML = insightsView(projects, totals, escape);
-      bind("refresh-insights", workspace);
+      const [tasks, events] = await Promise.all([
+        result(db.from("project_tasks").select("id,project_id,title,status,due_date").eq("owner_id",session.user.id)
+          .neq("status","done").order("due_date",{nullsFirst:false}).limit(80)),
+        rpc("project_notification_feed").catch(() => []),
+      ]);
+      const blocked = tasks.length ? await result(db.from("project_tasks").select("id,project_id,title,status,due_date")
+        .in("blocked_by",tasks.map((task) => task.id)).neq("status","done").limit(40)) : [];
+      if (version !== generation) return;
+      main.innerHTML = todayView({projects, totals, tasks, events, blocked, escape,
+        userName:session.user.user_metadata?.full_name?.trim().split(/\s+/)[0]});
+      for (const control of main.querySelectorAll("[data-today-task]")) control.onchange = async () => {
+        control.disabled = true;
+        try {
+          await result(db.from("project_tasks").update({status:control.value}).eq("id",control.dataset.todayTask).select("id").single());
+          notify("Task updated.");
+          await workspace();
+        } catch (error) {
+          control.value = tasks.find((task) => task.id === control.dataset.todayTask).status;
+          notify(error.message);
+          control.disabled = false;
+        }
+      };
       return;
     }
     const requested = new URLSearchParams(location.search).get("project");
     if (requested) {
-      history.replaceState(null, "", "/shared");
       const match = projects.find(p => p.id === requested);
-      if (match) return openProject(match);
+      if (match) return openProject(match, route.searchParams.get("sheet") || "Overview", false);
+      history.replaceState(null, "", "/shared");
       notify("This project is unavailable for this account.");
     }
     main.innerHTML =
@@ -420,7 +437,12 @@ async function workspace() {
     });
     for (const d of drafts) bind("draft-" + d.id, () => openWizard(d));
     for (const p of projects) bind("project-" + p.id, () => openProject(p));
+    if (route.searchParams.get("start") === "rulebook") {
+      history.replaceState(null,"","/shared");
+      document.getElementById("new-project-from-rules").click();
+    }
   } catch (err) {
+    if (version !== generation) return;
     main.innerHTML = errorBox(err) + button("retry-workspace", "Retry");
     bind("retry-workspace", workspace);
   }
@@ -668,19 +690,7 @@ function renderWizard() {
           (key) => [key, lines(values[key])],
         ),
       );
-      content.ai = { ...ai, ...values };
-      for (const key of [
-        "permitted_ai_tools",
-        "prohibited_ai_tools",
-        "permitted_models",
-      ])
-        content.ai[key] = lines(values[key]);
-      for (const key of [
-        "external_ai_apis_allowed",
-        "ai_generated_code_allowed",
-        "ai_generated_research_allowed",
-      ])
-        content.ai[key] = values[key] === "on";
+      content.ai = collectWizardPolicy(values, ai);
     }
   };
   document.getElementById("import-hackathon-rules").onclick = (event) => {
@@ -800,20 +810,113 @@ window.addEventListener("beforeunload", (e) => {
     e.returnValue = "";
   }
 });
-async function openProject(record) {
+function projectURL(id, sheet) {
+  return "/shared?" + new URLSearchParams({project: id, sheet});
+}
+async function openProject(record, sheet = "Overview", updateRoute = true) {
+  if (updateRoute) history.pushState(null, "", projectURL(record.id, sheet));
+  document.getElementById("studio-global-nav").querySelectorAll("[aria-current]").forEach((link) => link.removeAttribute("aria-current"));
+  document.querySelector('#studio-global-nav a[href="/shared"]').setAttribute("aria-current","page");
   project = record;
   wizard = null;
-  tab = "Overview";
+  tab = sheet;
   await loadProject();
 }
+async function navigate(path) {
+  if (wizard && draftChanges > savedChanges) await queueDraft();
+  clearTimeout(saveTimer);
+  const destination = new URL(path, location.href);
+  if (destination.href !== location.href) history.pushState(null, "", destination);
+  await workspace();
+}
+document.addEventListener("click", (event) => {
+  const link = event.target.closest?.("a[data-studio-route]");
+  if (!link || event.defaultPrevented || event.button !== 0 ||
+      event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigate(link.href).catch((error) => notify(error.message));
+});
+window.addEventListener("popstate", async () => {
+  try {
+    if (wizard && draftChanges > savedChanges) await queueDraft();
+    clearTimeout(saveTimer);
+    await workspace();
+  } catch (error) {
+    notify(error.message);
+  }
+});
+
+const commandDialog = document.getElementById("command-dialog");
+const commandQuery = document.getElementById("command-query");
+const commandResults = document.getElementById("command-results");
+document.getElementById("studio-command").onclick = async () => {
+  if (!session || commandDialog.open || dialog.open) return;
+  const active = project;
+  const entries = [
+    ["Open projects", () => navigate("/shared")],
+    ["Scan rulebook", async () => {
+      if (!document.getElementById("new-project-from-rules")) await navigate("/shared");
+      document.getElementById("new-project-from-rules")?.click();
+    }],
+    ...(active ? [
+      ["Add task", () => {
+        const quick = document.querySelector('[data-final="quick"]');
+        if (quick) quick.click();
+        else editTask();
+      }],
+      ["Ask mentor", () => {
+        showProjectSheet("AI mentor");
+        document.querySelector("#shared-content input, #shared-content textarea")?.focus();
+      }],
+    ] : []),
+  ];
+  const draw = () => {
+    const query = commandQuery.value.toLowerCase().trim();
+    const matching = entries.filter(([label]) => label.toLowerCase().includes(query));
+    commandResults.innerHTML = matching.map(([label], i) => button("command-option-" + i,label)).join("") ||
+      '<p class="shared-muted">No matching commands.</p>';
+    matching.forEach(([, run], i) => bind("command-option-" + i, () => {
+      commandDialog.close();
+      Promise.resolve().then(run).catch((error) => notify(error.message));
+    }));
+  };
+  commandQuery.value = "";
+  commandQuery.oninput = draw;
+  commandQuery.onkeydown = (event) => {
+    if (event.key === "Enter") commandResults.querySelector("button")?.click();
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      commandResults.querySelector("button")?.focus();
+    }
+  };
+  commandDialog.showModal();
+  draw();
+  try {
+    const projects = await result(db.from("projects").select("id,name").is("archived_at",null).order("updated_at",{ascending:false}).limit(25));
+    if (commandDialog.open) {
+      entries.push(...projects.map((item) => ["Open " + item.name, () => navigate(projectURL(item.id,"Overview"))]));
+      draw();
+    }
+  } catch {
+    if (commandDialog.open) commandResults.append(Object.assign(document.createElement("p"), {textContent:"Project search unavailable. Reopen Commands to retry."}));
+  }
+};
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && session && !dialog.open) {
+    event.preventDefault();
+    if (commandDialog.open) commandDialog.close();
+    else document.getElementById("studio-command").click();
+  }
+});
 async function loadProject() {
   if (!project) {
     await workspace();
     return;
   }
+  detachSheet();
   const version = ++generation,
     id = project.id;
-  main.innerHTML = empty("Loading project records…");
+  main.innerHTML = skeleton("Loading project records");
   try {
     const queries = [
       ["milestones", db.from("milestones").select("*").eq("project_id", id).order("due")],
@@ -909,59 +1012,83 @@ async function loadProject() {
   } catch (err) {
     if (version === generation) {
       main.innerHTML =
-        errorBox(err) + button("back-projects", "Back to projects");
-      bind("back-projects", workspace);
+        errorBox(err) + button("retry-project", "Retry", true) + button("back-projects", "Back to projects");
+      bind("retry-project", loadProject);
+      bind("back-projects", () => navigate("/shared"));
     }
   }
 }
 const leader = () => project?.leader_id === session?.user.id;
 const memberName = (id) =>
   data.members.find((m) => m.user_id === id)?.full_name || "Unassigned";
+const projectGroups = {
+  Overview:["Overview","My dashboard","Today","AI mentor","Report","Portfolio","Ship check"],
+  Plan:["Planning board","Timeline","Learning","Project setup"],
+  Team:["Team","Chats","Register"],
+  Work:["Board","AI credits","Settings"],
+  Activity:["Activity","Files","History"],
+};
+function showProjectSheet(next) {
+  tab = next;
+  history.replaceState(null, "", projectURL(project.id, tab));
+  renderProject();
+}
 function renderProject() {
   detachSheet();
-  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings"];
+  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings","Files","History"];
   const tabs=data.personalReady?labels:labels.filter(t=>!["My dashboard","AI credits","Register","Settings"].includes(t));
   if(!tabs.includes(tab))tab="Overview";
+  const activeGroup = Object.keys(projectGroups).find(group => projectGroups[group].includes(tab));
+  const sections = projectGroups[activeGroup].filter(sheet => tabs.includes(sheet));
   const viewAliases={"Project setup":"Setup",Chats:"Chat","AI mentor":"Mentor","Ship check":"Ship","Planning board":"Planning"};
   const view=viewAliases[tab]||tab;
   const stageSheets={Idea:"Project setup",Plan:"Planning board",Team:"Team",Build:"Board",Learn:"Learning",Ship:"Ship check"};
   const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view];
   const days=project.submission_deadline?Math.max(0,Math.ceil((Date.parse(project.submission_deadline+"T23:59:59")-Date.now())/86400000)):null;
   const icons=["M2 2h5v5H2zm9 0h5v5h-5zM2 11h5v5H2zm9 0h5v5h-5z","M9 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-6 7c0-5 12-5 12 0","M9 2v14M2 9h14M4 4l10 10m0-10L4 14","M2 3h14v10H7l-5 3z","M2 3h14v12H2zm5 0v12m4-12v12","M9 2v14M2 9h14","M4 4v10m0-5 10-5m-10 10 10-5","M2 13a7 7 0 0 1 14 0M9 12l4-4","M5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-4 7c0-5 8-5 8 0M11 4c5-1 6 4 2 5m-1 2c3 0 5 2 5 5","M9 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 3v4l3 2","M2 3h6l1 2 1-2h6v11h-6l-1 2-1-2H2z","M3 15l1-4 9-9 3 3-9 9z","M9 1v16M1 9h16M3 3l12 12m0-12L3 15","M2 9l5 5 9-11","M2 3h14v13H2zm3 9V8m4 4V6m4 6V9","M2 5h14v11H2zm4 0V2h6v3","M9 2v14M2 9h14","M9 1v4m0 8v4M1 9h4m8 0h4M9 5a4 4 0 1 0 .01 0z"];
-  const icon=t=>'<svg class="studio-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="'+icons[labels.indexOf(t)]+'"/></svg>';
-  main.innerHTML='<div class="bp-layout final-layout"><nav class="shared-tabs" aria-label="Project sheets"><a class="studio-rail-brand" href="/shared">✳ AITHYA</a>'+
-    tabs.map(t=>'<button type="button" aria-current="'+(tab===t?"page":"false")+'" id="tab-'+(viewAliases[t]||t.replaceAll(" ","-"))+'">'+icon(t)+escape(t)+'</button>').join("")+
-    '<div class="studio-rail-account"><small>Signed in as</small><strong>'+escape(memberName(session.user.id))+'</strong></div></nav><div class="studio-project-body">'+
+  const icon=t=>icons[labels.indexOf(t)] ? '<svg class="studio-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="'+icons[labels.indexOf(t)]+'"/></svg>' : "";
+  const tabId = (sheet) => "tab-" + (viewAliases[sheet] || sheet.replaceAll(" ","-"));
+  main.innerHTML='<div class="bp-layout final-layout"><div class="studio-project-body">'+
     '<header class="project-masthead studio-title-block"><div><h1>'+escape(project.name)+'</h1><p>'+escape([project.hackathon_name||project.theme,days!==null?days+" days left":""].filter(Boolean).join(" · "))+'</p></div>'+
     '<nav class="bp-steps" aria-label="Project stages">'+Object.keys(stageSheets).map(name=>'<button type="button" id="stage-'+name+'"'+(stage===name?' aria-current="step"':'')+'>'+name+'</button>').join('')+'</nav><div class="studio-project-due"><small>Due</small><strong>'+escape(project.submission_deadline||"Unscheduled")+'</strong></div></header>'+
-    '<div id="shared-content" class="shared-content"></div></div></div>';
-  bind("back-projects", () => { location.href = "/shared"; });
+    '<div class="studio-primary-tabs" role="tablist" aria-label="Project areas">' +
+    Object.keys(projectGroups).map(group => tabButton("area-"+group,group,group===activeGroup,"project-area")).join("") +
+    '</div><section id="project-area" role="tabpanel" aria-labelledby="area-' + activeGroup + '">' +
+    '<div class="shared-tabs" role="tablist" aria-label="' + activeGroup + ' sections">' +
+    sections.map(sheet => tabButton(tabId(sheet),sheet,sheet===tab,"shared-content",icon(sheet))).join("") +
+    '</div><div id="shared-content" class="shared-content" role="tabpanel" tabindex="0" aria-labelledby="' + tabId(tab) + '"></div></section></div></div>';
+  for (const list of main.querySelectorAll('[role="tablist"]')) tabKeys(list);
+  bind("back-projects", () => navigate("/shared"));
   bind("refresh-shared", loadProject);
-  for(const [name,sheet] of Object.entries(stageSheets)){
-    bind("stage-"+name,()=>{
-      tab=sheet;
-      renderProject();
+  for (const [name,sheet] of Object.entries(stageSheets)) {
+    bind("stage-"+name,() => {
+      showProjectSheet(sheet);
       document.getElementById("stage-"+name)?.focus();
     });
   }
-  for (const t of tabs)
-    bind("tab-" + (viewAliases[t]||t.replaceAll(" ","-")), () => {
-      tab = t;
-      renderProject();
+  for (const [group, sheets] of Object.entries(projectGroups)) {
+    bind("area-"+group, () => {
+      if (group !== activeGroup) showProjectSheet(sheets[0]);
+      document.getElementById("area-"+group)?.focus();
     });
+  }
+  for (const sheet of sections) bind(tabId(sheet), () => {
+    if (sheet !== tab) showProjectSheet(sheet);
+    document.getElementById(tabId(sheet))?.focus();
+  });
   ({
     Overview: overviewView,
     Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,escape,leader:leader()},document.getElementById("shared-content")),
     Setup: requirementsView,
     Team: teamView,
     Board: tasksView,
-    Portfolio:()=>renderPortfolio({db,main:document.getElementById("shared-content"),user:session.user,result,escape,button,field,area,select,bind,modal,notify,back:()=>{tab="Overview";renderProject()}}),
+    Portfolio:()=>renderPortfolio({db,main:document.getElementById("shared-content"),user:session.user,result,escape,button,field,area,select,bind,modal,notify,back:()=>{showProjectSheet("Overview")}}),
     Learning: learningView,
     Files: filesView,
     Activity: activityView,
     History: historyView,
   })[view]?.();
-  const openSheet=next=>{tab=Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next;renderProject()};
+  const openSheet=next=>showProjectSheet(Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next);
   detachSheet=mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editTask,editPolicy:editAiPolicy});
 
 }
@@ -1034,7 +1161,7 @@ function overviewView() {
         : "") +
       "</section></div>",
   );
-  bind("project-activity", () => { tab = "Activity"; renderProject(); });
+  bind("project-activity", () => { showProjectSheet("Activity"); });
   bind("edit-brief", () =>
     modal(
       "Edit project brief",
@@ -1151,17 +1278,20 @@ async function activityView() {
   content('<header class="shared-header"><div><h2>GitHub &amp; Vercel</h2><p>' +
     escape(project.repository || "Repository awaiting setup") + '</p></div>' +
     (leader() ? '<div class="shared-actions">' + button("edit-connections", "Connections") + button("vercel-token", "Vercel token") + "</div>" : "") +
-    '</header><div id="project-feed" aria-live="polite"></div>');
+    button("refresh-project-feed", "Refresh") + '</header><div id="project-feed" aria-live="polite"></div>');
   bind("vercel-token", vercelTokenSettings);
   bind("edit-connections", editConnections);
   const panel = document.getElementById("project-feed");
   const id = project.id;
   let refreshing = false;
+  const refreshButton = document.getElementById("refresh-project-feed");
   async function refresh() {
     if (!panel.isConnected || refreshing || document.hidden) return;
     refreshing = true;
+    refreshButton.disabled = true;
+    panel.setAttribute("aria-busy", "true");
     try {
-      const response = await fetch("/api/activity?project=" + encodeURIComponent(id), {headers:{Authorization:"Bearer " + session.access_token}});
+      const response = await fetch("/api/activity?project=" + encodeURIComponent(id), {headers:{Authorization:"Bearer " + session.access_token},signal:AbortSignal.timeout(20000)});
       const feed = await response.json();
       if (!response.ok) throw Error(feed.error || "Activity is temporarily unavailable.");
       if (!panel.isConnected) return;
@@ -1174,17 +1304,19 @@ async function activityView() {
         '</section></div><section class="bp-panel"><h3>Repository contributors</h3><p>Latest six commits · '+(feed.pullsAvailable?'up to 50 recently updated pull requests':'pull request data unavailable')+'</p>'+
         (feed.contributors||[]).map(c=>'<div class="bp-bar"><span>'+escape(c.login)+'</span><progress value="'+c.commits+'" max="6"></progress><b>'+c.commits+' commits</b></div><div class="bp-bar"><span>Pull requests</span><progress value="'+c.pulls+'" max="50"></progress><b>'+c.pulls+' PRs</b></div>').join("")+'</section><p class="shared-muted">Updated '  + escape(when(feed.updatedAt)) + '</p>';
     } catch (error) {
-      if (panel.isConnected) panel.innerHTML = errorBox(error);
+      if (panel.isConnected) {
+        panel.innerHTML = errorBox(error) + button("retry-project-feed", "Retry");
+        bind("retry-project-feed", refresh);
+      }
     } finally {
+      panel.removeAttribute("aria-busy");
+      refreshButton.disabled = false;
       refreshing = false;
     }
   }
-  panel.textContent = "Loading repository activity…";
+  panel.innerHTML = skeleton("Loading repository activity");
+  refreshButton.onclick = refresh;
   await refresh();
-  function schedule() {
-    if (panel.isConnected) setTimeout(async () => { await refresh(); schedule(); },60000);
-  }
-  schedule();
 }
 
 function editAiPolicy() {

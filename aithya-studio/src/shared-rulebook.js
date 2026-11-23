@@ -1,3 +1,4 @@
+import { rulebookLimit } from "./lib/rulebook-limits.js";
 import {
   applyRulebookSuggestions,
   readRulebook,
@@ -18,7 +19,7 @@ const scanTypes = {
 async function scanRulebook(file, mime) {
   if (!mime)
     throw Error("Use a PDF, JPEG, PNG, or WebP file for Gemini scanning.");
-  if (file.size > 8 * 1024 * 1024)
+  if (file.size > rulebookLimit)
     throw Error("Choose a file up to 8 MB for Gemini scanning.");
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw Error("Sign in again to scan this file.");
@@ -34,7 +35,7 @@ async function scanRulebook(file, mime) {
     const parts = Math.ceil(file.size / chunkSize);
     for (let part = 0; part < parts; part++) {
       const response = await fetch(url + "/part?scan=" + scanId + "&part=" + part, {
-        method: "POST", headers,
+        method: "POST", headers, signal: AbortSignal.timeout(20000),
         body: file.slice(part * chunkSize, (part + 1) * chunkSize, mime),
       });
       if (!response.ok) {
@@ -45,7 +46,7 @@ async function scanRulebook(file, mime) {
     url += "?scan=" + scanId + "&parts=" + parts;
     body = "";
   }
-  const response = await fetch(url, {method:"POST", headers, body});
+  const response = await fetch(url, {method:"POST", headers, body, signal:AbortSignal.timeout(75000)});
   if (response.status === 413) throw Error("The file exceeds the upload limit for this deployment.");
   const payload = await response.json();
   if (!response.ok)
@@ -59,7 +60,7 @@ export function openRulebookImport({ dialog, draft, escape, onApply }) {
   const body = document.getElementById("shared-dialog-body");
   body.innerHTML =
     '<form id="rulebook-input" class="shared-form">' +
-    "<p>Upload a PDF, photo, Markdown, or text file, or paste the rules.</p>" +
+    "<p>Upload a rulebook up to 8 MB or paste the rules.</p>" +
     '<label for="rulebook-file">Rulebook file</label><input id="rulebook-file" type="file" accept=".pdf,.txt,.md,.jpg,.jpeg,.png,.webp">' +
     '<label for="rulebook-text">Or paste the rules</label><textarea id="rulebook-text" maxlength="120000" rows="8"></textarea>' +
     '<label><input id="rulebook-scan" type="checkbox">Use Gemini to read this PDF or photo</label>' +

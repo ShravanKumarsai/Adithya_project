@@ -15,13 +15,8 @@ function database() {
 
 export const DB = {
   prepare(statement) {
-    const query = statement
-      .replace("INSERT OR IGNORE", "INSERT")
-      .replace("SET attempts=attempts+1 WHERE attempts<",
-        "SET attempts=planning_rate.attempts+1 WHERE planning_rate.attempts<")
-      .replace(/INSERT INTO project_notes VALUES\(.+\)$/, "$& ON CONFLICT DO NOTHING");
     let position = 0;
-    const text = query.replaceAll("?", () => "$" + ++position);
+    const text = statement.replaceAll("?", () => "$" + ++position);
     return {
       bind(...params) {
         const execute = () => database().unsafe(text, params);
@@ -31,21 +26,6 @@ export const DB = {
         };
       },
     };
-  },
-};
-
-export const FILES = {
-  async list({prefix}) {
-    const rows = await database()`select key, name, octet_length(bytes) as size
-      from notebook_files where starts_with(key, ${prefix}) order by key`;
-    return {objects: rows.map(({key, name, size}) => ({key, size, customMetadata:{name}}))};
-  },
-  async get(key) {
-    const [row] = await database()`select bytes, name from notebook_files where key = ${key}`;
-    return row && {body: row.bytes, customMetadata: {name:row.name}};
-  },
-  async put(key, bytes, {customMetadata:{name}}) {
-    await database()`insert into notebook_files(key, bytes, name) values (${key}, ${Buffer.from(bytes)}, ${name})`;
   },
 };
 

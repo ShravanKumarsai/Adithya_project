@@ -1,11 +1,11 @@
-const styles = ["blueprint", "light", "dark"];
+const styles = ["blueprint", "light", "dark", "system"];
 const accents = ["blue", "green", "amber", "rose"];
 const sizes = ["small", "medium", "large"];
 export function studioAppearance() {
   return {
     theme: styles.includes(localStorage.getItem("aithya.theme"))
       ? localStorage.getItem("aithya.theme")
-      : "blueprint",
+      : "system",
     accent: accents.includes(localStorage.getItem("aithya.accent"))
       ? localStorage.getItem("aithya.accent")
       : "blue",
@@ -16,11 +16,12 @@ export function studioAppearance() {
 }
 export function applyStudioAppearance(p = studioAppearance()) {
   const root = document.documentElement;
-  root.dataset.blueprint = styles.includes(p.theme) ? p.theme : "blueprint";
+  const theme = styles.includes(p.theme) ? p.theme : "system";
+  root.dataset.blueprint = theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
   root.dataset.accent = accents.includes(p.accent) ? p.accent : "blue";
   root.dataset.icon = sizes.includes(p.icon) ? p.icon : "medium";
   for (const [key, value] of [
-    ["theme", root.dataset.blueprint],
+    ["theme", theme],
     ["accent", root.dataset.accent],
     ["icon", root.dataset.icon],
   ])

@@ -1,3 +1,9 @@
+import { json, timedFetch } from "./server/http.mjs";
+import { dailyLimits, quotaReservations } from "./server/quota.mjs";
+import { supabasePublishableKey, supabaseUrl } from "./src/lib/supabase-config.js";
+import { assistContracts, cleanResult } from "./src/assist-contract.js";
+import { clip, strings, defaultGeminiModel, permittedGeminiModel, projectGeminiKey, revealIntegration, uuidPattern } from "./planning-api.mjs";
+
 const platformAssist = new Set([
   "problem.summary",
   "rules.extract",
@@ -6,7 +12,6 @@ const platformAssist = new Set([
   "skills.normalize",
   "project.intake",
 ]);
-const previewLimit = 50;
 
 async function getAssistRows(authorization, table, filters) {
   const query = new URLSearchParams(filters);
@@ -229,7 +234,7 @@ async function assembleAssistContext(
   );
 }
 
-async function studioAssist(request, env, url, user) {
+export async function studioAssist(request, env, url, user) {
   if (request.method !== "POST" || request.headers.get("origin") !== url.origin)
     return json({ error: "Open assistance from your project." }, 403);
   const authorization = request.headers.get("authorization");
@@ -239,6 +244,7 @@ async function studioAssist(request, env, url, user) {
     task,
     model,
     called = false;
+  const quota = quotaReservations(env.DB);
   const log = async (ok, usage) => {
     try {
       await env.DB.prepare(
@@ -330,13 +336,7 @@ async function studioAssist(request, env, url, user) {
       const stored = await projectGeminiKey(env, id);
       if (!stored)
         return json({ error: "Add the team Gemini key in Settings." }, 422);
-      key = new TextDecoder().decode(
-        await crypto.subtle.decrypt(
-          projectKeyCipher(id, decodeBytes(stored.nonce)),
-          await encryptionKey(env),
-          decodeBytes(stored.ciphertext),
-        ),
-      );
+      key = await revealIntegration(env, id, "gemini", stored);
     }
     if (!key)
       return json({ error: "The setup Gemini key is unavailable." }, 422);
@@ -348,21 +348,12 @@ async function studioAssist(request, env, url, user) {
         user,
         authorization,
       );
-    const day = new Date().toISOString().slice(0, 10);
-    const charge = (bucket, limit) =>
-      env.DB.prepare(
-        "INSERT INTO planning_rate(account_id,day,attempts) VALUES(?,?,1) ON CONFLICT(account_id,day) DO UPDATE SET attempts=attempts+1 WHERE attempts<?",
-      )
-        .bind(bucket, day, limit)
-        .run();
-    const personal = await charge("assist-user:" + user.id, 15);
-    if (!personal.meta.changes)
-      return json({ error: "Your daily assistance quota is used." }, 429);
-    const quota = await charge("assist-project:" + id, previewLimit);
-    if (!quota.meta.changes)
-      return json({ error: "This project reached its daily AI quota." }, 429);
-    if (initialization && !(await charge("assist-platform", 120)).meta.changes)
-      return json({ error: "Setup assistance is at capacity today." }, 429);
+    if (!await quota.reserve("assist-user:" + user.id, dailyLimits.assistUser))
+      return json(quota.exceeded("Your daily assistance quota is used.", dailyLimits.assistUser), 429);
+    if (!await quota.reserve("assist-project:" + id, dailyLimits.assistProject))
+      return json(quota.exceeded("This project reached its daily AI quota.", dailyLimits.assistProject), 429);
+    if (initialization && !await quota.reserve("assist-platform", dailyLimits.assistSite))
+      return json(quota.exceeded("Setup assistance is at capacity today.", dailyLimits.assistSite), 429);
     called = true;
     const response = await timedFetch(
       "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -404,6 +395,7 @@ async function studioAssist(request, env, url, user) {
       ),
     );
     await log(true, result.usageMetadata);
+    quota.commit();
     return json({ data, ai: true });
   } catch {
     if (called) await log(false);
@@ -414,5 +406,7 @@ async function studioAssist(request, env, url, user) {
       },
       502,
     );
+  } finally {
+    await quota.refund();
   }
 }
