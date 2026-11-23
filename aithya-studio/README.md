@@ -110,3 +110,9 @@ The unused notebook frontend and its API routes are retired. The historical D1 m
 ### Tests
 
 Run `npm ci`, `npm run lint`, `npm test`, and `npm run build && node vercel-build.mjs`. Then run `npx playwright install chromium` and `npm run test:browser`. The browser test uses fixtures for Supabase and integrations. It exercises the redesigned mobile shell, keyboard tabs and command palette, rulebook review, and Today. It does not send email or consume provider usage.
+
+### Rulebook and task review
+
+Project setup starts with a source step. Import a PDF, photo, or pasted rules, then review the filled brief, rules, and policy fields. Manual entry opens the same review step. The Plan area has an AI plan sheet with template cards and data disclosure. Saving a generated plan and adding selected tasks are separate actions. A lead can edit task titles and link each task to a requirement before adding them. Project setup shows existing task coverage and gaps.
+
+The Worker serves existing Gemini capabilities through `POST /api/ai/<capability>` alongside previous routes for compatibility. Structured drafts still use their provider-specific validators and policy checks. Recognized credentials and email addresses are removed from text before planning or assistance requests. The file importer sends the selected PDF or image as disclosed in the import dialog. This release adds no new database tables or RLS rules.

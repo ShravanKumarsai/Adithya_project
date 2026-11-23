@@ -1,3 +1,4 @@
+import { redactAIContext } from "./server/ai-context.mjs";
 import { json, timedFetch } from "./server/http.mjs";
 import { dailyLimits, quotaReservations } from "./server/quota.mjs";
 import { supabasePublishableKey, supabaseUrl } from "./src/lib/supabase-config.js";
@@ -234,7 +235,7 @@ async function assembleAssistContext(
   );
 }
 
-export async function studioAssist(request, env, url, user) {
+export async function studioAssist(request, env, url, user, capability) {
   if (request.method !== "POST" || request.headers.get("origin") !== url.origin)
     return json({ error: "Open assistance from your project." }, 403);
   const authorization = request.headers.get("authorization");
@@ -279,7 +280,7 @@ export async function studioAssist(request, env, url, user) {
       typeof payload.projectId === "string"
         ? payload.projectId.toLowerCase()
         : "";
-    task = payload.task === "role.analyze" ? "role.analysis" : payload.task;
+    task = capability || (payload.task === "role.analyze" ? "role.analysis" : payload.task);
     if (task === "direct.summary")
       return json(
         { error: "Private conversations stay out of AI requests." },
@@ -371,7 +372,7 @@ export async function studioAssist(request, env, url, user) {
               { text: instruction },
             ],
           },
-          contents: [{ parts: [{ text: JSON.stringify(scoped) }] }],
+          contents: [{ parts: [{ text: JSON.stringify(redactAIContext(scoped)) }] }],
           generationConfig: {
             responseMimeType: "application/json",
             responseJsonSchema: schema,

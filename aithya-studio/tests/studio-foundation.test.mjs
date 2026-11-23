@@ -245,3 +245,25 @@ test("navigation escapes dynamic labels and Today switches to crunch mode", () =
   assert.match(html, /Check deployment/);
   assert.doesNotMatch(html, /<Draft>|My day/);
 });
+
+test("AI text context redacts contacts, credentials and dotenv-style values", async () => {
+  const { redactAIContext } = await import("../server/ai-context.mjs");
+  const cleaned = redactAIContext({
+    email: "name@example.com",
+    brief: "Ask name@example.com\nOPENAI_API_KEY=super-secret\nUse React.",
+  });
+  assert.deepEqual(cleaned, {
+    brief: "Ask [redacted email]\n[redacted credential]\nUse React.",
+  });
+});
+
+test("AI endpoint rejects unregistered capabilities and requests that are not drafts", async () => {
+  const { studioAI } = await import("../server/ai-service.mjs");
+  const url = new URL(host + "/api/ai/unknown");
+  assert.equal(
+    (await studioAI(new Request(url, { method: "POST" }), {}, url, user))
+      .status,
+    404,
+  );
+  assert.equal((await studioAI(new Request(url), {}, url, user)).status, 405);
+});

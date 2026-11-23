@@ -1,3 +1,4 @@
+import { redactAIContext } from "./server/ai-context.mjs";
 import { github, isRepo } from "./server/github.mjs";
 import { json, timedFetch } from "./server/http.mjs";
 import { dailyLimits, quotaReservations } from "./server/quota.mjs";
@@ -406,7 +407,7 @@ export async function planningResponse(request, env, url, user) {
               },
             ],
           },
-          contents: [{ parts: [{ text: JSON.stringify(context) }] }],
+          contents: [{ parts: [{ text: JSON.stringify(redactAIContext(context)) }] }],
           generationConfig: {
             responseMimeType: "application/json",
             responseJsonSchema: planSchema,

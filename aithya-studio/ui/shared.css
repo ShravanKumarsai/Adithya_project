@@ -857,3 +857,16 @@ body .shared-main p {max-width:70ch}
 .today-status {width: min(100%, 140px);flex:none}
 .today-status select {min-height: var(--target)}
 .shared-main .task-track {min-width: 35%;width: 130px;max-width: 100%}
+.wizard-group {padding:var(--space-3);margin-bottom:var(--space-2);border:1px solid var(--line);background:var(--panel)}
+.wizard-group summary {font-weight:700;min-height:var(--target);display:flex;align-items:center}
+.wizard-group summary::before {content:"+";margin-right:var(--space-2)}
+.wizard-group[open] summary::before {content:"−"}
+#wizard-error {color:var(--red);padding-block:var(--space-1)}
+.studio-coverage {list-style:none;padding:0;margin:0}
+.studio-coverage > li {padding-block:var(--space-2);border-top:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:var(--space-1)}
+.studio-coverage details {grid-column:1/-1}
+.planning-templates {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:var(--space-2)}
+.shared-form .planning-templates label {display:flex;align-items:flex-start;gap:var(--space-1);min-height:var(--target);padding:var(--space-2);border:1px solid var(--line)}
+.planning-templates label:has(input:checked) {background:var(--lit);border-color:var(--accent)}
+.planning-templates small {display:block}
+#plan-task-review fieldset {margin-block:var(--space-2)}

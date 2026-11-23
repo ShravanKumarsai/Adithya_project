@@ -7,6 +7,7 @@ import {studioSkills} from "./assist-contract.js";
 import { todayView } from "./project-insights.js";
 import { openRulebookImport } from "./shared-rulebook.js";
 import { notifications } from "./shared-notifications.js";
+import { renderPlanning } from "./shared-planning.js";
 import { renderPortfolio } from "./shared-portfolio.js";
 import { supabase as db } from "./lib/supabase.js";
 
@@ -547,14 +548,12 @@ function openWizard(draft) {
   renderWizard();
 }
 function renderWizard() {
-  const content = wizard.content,
-    step = content.step || 0;
+  const content = wizard.content;
+  const step = content.step > 0 ? 1 : 0;
   const projectData = content.project || {},
     requirements = content.requirements || {},
     ai = content.ai || {};
-  let fields;
-  if (step === 0)
-    fields = projectFields
+  const briefFields = projectFields
       .map(([key, label]) => {
         const value = Array.isArray(projectData[key])
           ? projectData[key].join("\n")
@@ -578,9 +577,7 @@ function renderWizard() {
             );
       })
       .join("");
-  else if (step === 1)
-    fields =
-      area(
+  const ruleFields = area(
         "judging_criteria",
         "Judging criteria",
         requirements.judging_criteria?.join("\n"),
@@ -594,8 +591,8 @@ function renderWizard() {
         "restrictions",
         "Submission restrictions",
         requirements.restrictions?.join("\n"),
-      ) +
-      area(
+      );
+  const policyFields = area(
         "permitted_ai_tools",
         "Permitted AI tools",
         ai.permitted_ai_tools?.join("\n"),
@@ -636,25 +633,17 @@ function renderWizard() {
         "Additional AI instructions",
         ai.other_requirements,
       );
-  else
-    fields =
-      "<p>Your account becomes the project leader. Add teammates and upload rulebooks after creating the project.</p><h2>" +
-      escape(projectData.name || "Untitled project") +
-      '</h2><ul class="shared-checks">' +
-      status("Problem statement", projectData.problem_statement) +
-      status("Deadline", projectData.submission_deadline) +
-      status("Deliverables", projectData.expected_deliverables?.length) +
-      status(
-        "Official requirements",
-        requirements.mandatory_requirements?.length,
-      ) +
-      status("Workflow", projectData.workflow_content) +
-      '</ul><p class="shared-muted">You can complete missing information after creation.</p>';
+  const group = (name, markup, open = false) =>
+    '<details class="wizard-group"' + (open ? ' open' : '') + '><summary>' + name + '</summary>' + markup + '</details>';
+  const fields = step === 0
+    ? '<section class="bp-panel"><h2>Start from a rulebook</h2><p>Upload a PDF or photo, or paste the rules. Review the suggested details before creating the project.</p>' +
+      '<button type="button" id="import-hackathon-rules" class="button primary">Import hackathon rules</button></section>'
+    : group("Project brief",briefFields,true) + group("Rules and judging",ruleFields) + group("AI policy",policyFields);
   main.innerHTML =
     '<header class="shared-header"><h1>Project setup</h1>' +
     button("close-wizard", "Back to projects") +
     '</header><nav class="wizard-steps">' +
-    ["Project brief", "Rules & AI policy", "Review"]
+    ["Source", "Review"]
       .map(
         (label, i) =>
           '<button id="step-' +
@@ -668,58 +657,41 @@ function renderWizard() {
       .join("") +
     '</nav><form id="wizard-form" class="shared-form"><div class="shared-columns"><section>' +
     fields +
-    '</section><section class="draft-info"><h3>Saved as you work</h3><p id="draft-state" role="status">Draft ready</p><p class="shared-muted">Drafts are private to your account. Creating the project makes it available to accepted members.</p></section></div><div id="wizard-error"></div><div class="shared-actions">' +
-    button("save-draft", "Save draft") +
-    button("wizard-next", step < 2 ? "Continue" : "Create project", true) +
-    '</div><p><a href="#import-hackathon-rules" class="text-link" id="import-hackathon-rules">Import hackathon rules</a></p></form>';
+    '</section><section class="draft-info"><h3>Draft</h3><p id="draft-state" role="status">Draft ready</p><p class="shared-muted">Private until you create the project.</p></section></div><div id="wizard-error" role="alert"></div><div class="shared-actions">' +
+    (step ? button("save-draft", "Save draft") : "") +
+    button("wizard-next", step ? "Create project" : "Enter details manually", step === 1) +
+    '</div></form>';
   const form = document.getElementById("wizard-form");
   form.onsubmit = (e) => e.preventDefault();
   const collect = () => {
     const values = Object.fromEntries(new FormData(form));
-    if (step === 0) {
-      content.project = { ...projectData, ...values };
-      for (const key of ["expected_deliverables", "technology_stack"])
-        content.project[key] = lines(values[key]);
-      content.project.workflow_status = values.workflow_content?.trim()
-        ? "provided"
-        : "requires_generation";
-    }
-    if (step === 1) {
-      content.requirements = Object.fromEntries(
-        ["judging_criteria", "mandatory_requirements", "restrictions"].map(
-          (key) => [key, lines(values[key])],
-        ),
-      );
-      content.ai = collectWizardPolicy(values, ai);
-    }
+    if (step !== 1) return;
+    content.project = {...projectData, ...Object.fromEntries(projectFields.map(([key]) => [key,values[key] || ""]))};
+    for (const key of ["expected_deliverables","technology_stack"]) content.project[key] = lines(values[key]);
+    content.project.workflow_status = values.workflow_content?.trim() ? "provided" : "requires_generation";
+    content.requirements = Object.fromEntries(
+      ["judging_criteria","mandatory_requirements","restrictions"].map((key) => [key,lines(values[key])]),
+    );
+    content.ai = collectWizardPolicy(values,ai);
   };
-  document.getElementById("import-hackathon-rules").onclick = (event) => {
-    event.preventDefault();
-    collect();
-    openRulebookImport({
-      dialog,
-      draft: content,
-      escape,
-      onApply: async (labels) => {
-        draftChanges++;
-        content.step = step === 2 ? 0 : step;
-        renderWizard();
-        try {
-          await queueDraft();
-          notify(
-            "Filled " +
-              labels.length +
-              " " +
-              (labels.length === 1 ? "field" : "fields") +
-              ". Review the setup and fill the remaining blanks.",
-          );
-        } catch (error) {
-          notify(error.message);
-        }
-        document.getElementById("import-hackathon-rules")?.focus();
-      },
-    });
-  };
+  const importer = document.getElementById("import-hackathon-rules");
+  if (importer) importer.onclick = () => openRulebookImport({
+    dialog, draft:content, escape,
+    onApply: async (labels) => {
+      if (!content.project?.name && content.project?.hackathon_name)
+        content.project.name = content.project.hackathon_name.slice(0,120);
+      draftChanges++;
+      content.step = 1;
+      renderWizard();
+      try {
+        await queueDraft();
+        notify("Imported " + labels.length + " fields. Review them before creating the project.");
+      } catch (error) {
+        notify(error.message);
+      }
+      document.getElementById("f-name")?.focus();
+    },
+  });
   form.addEventListener("input", () => {
     collect();
     draftChanges++;
@@ -728,13 +700,15 @@ function renderWizard() {
     saveTimer = setTimeout(() => queueDraft().catch(() => {}), 700);
   });
   async function move(next) {
+    if (step === next) return;
     collect();
-    await queueDraft();
     content.step = next;
+    draftChanges++;
     await queueDraft();
     renderWizard();
+    document.getElementById("step-" + next)?.focus();
   }
-  for (let i = 0; i < 3; i++) bind("step-" + i, () => move(i));
+  for (let i = 0; i < 2; i++) bind("step-" + i, () => move(i));
   bind("save-draft", () => {
     collect();
     return queueDraft();
@@ -745,22 +719,22 @@ function renderWizard() {
     await workspace();
   });
   bind("wizard-next", async () => {
+    if (!step) return move(1);
     collect();
     const p = content.project;
-    if (step === 0) {
-      if (!p.name?.trim() || p.name.trim().length < 2)
-        throw Error("Enter a project name with at least two characters.");
-      if (
-        p.start_date &&
-        p.submission_deadline &&
-        p.start_date > p.submission_deadline
-      )
-        throw Error("The deadline must follow the start date.");
-      if (p.repository && !/^[\w-]+\/[\w.-]+$/.test(p.repository))
-        throw Error("Use owner/repository for the GitHub repository.");
+    const validation = document.getElementById("wizard-error");
+    validation.textContent = "";
+    let error = "";
+    if (!p.name?.trim() || p.name.trim().length < 2) error = "Enter a project name with at least two characters.";
+    else if (p.start_date && p.submission_deadline && p.start_date > p.submission_deadline)
+      error = "The deadline must follow the start date.";
+    if (p.repository) {
+      const repo = /^(?:https:\/\/github\.com\/)?([A-Za-z0-9-]{1,39}\/[A-Za-z0-9_.-]{1,100})\/?$/i.exec(p.repository.trim());
+      if (!repo || /\/(?:\.|\.\.)$/.test(repo[1])) error ||= "Use a GitHub repository URL or owner/repository.";
+      else p.repository = repo[1].replace(/\.git$/i,"");
     }
-    if (step < 2) {
-      await move(step + 1);
+    if (error) {
+      validation.textContent = error;
       return;
     }
     await queueDraft();
@@ -1023,7 +997,7 @@ const memberName = (id) =>
   data.members.find((m) => m.user_id === id)?.full_name || "Unassigned";
 const projectGroups = {
   Overview:["Overview","My dashboard","Today","AI mentor","Report","Portfolio","Ship check"],
-  Plan:["Planning board","Timeline","Learning","Project setup"],
+  Plan:["Planning board","AI plan","Timeline","Learning","Project setup"],
   Team:["Team","Chats","Register"],
   Work:["Board","AI credits","Settings"],
   Activity:["Activity","Files","History"],
@@ -1035,7 +1009,7 @@ function showProjectSheet(next) {
 }
 function renderProject() {
   detachSheet();
-  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings","Files","History"];
+  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings","Files","History","AI plan"];
   const tabs=data.personalReady?labels:labels.filter(t=>!["My dashboard","AI credits","Register","Settings"].includes(t));
   if(!tabs.includes(tab))tab="Overview";
   const activeGroup = Object.keys(projectGroups).find(group => projectGroups[group].includes(tab));
@@ -1079,6 +1053,8 @@ function renderProject() {
   ({
     Overview: overviewView,
     Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,escape,leader:leader()},document.getElementById("shared-content")),
+    "AI plan": () => renderPlanning({db, project, leader:leader(), ai:data.ai, escape,
+      when, result, notify, editPolicy:editAiPolicy, requirements:data.requirements, tasks:data.tasks, refresh:loadProject}),
     Setup: requirementsView,
     Team: teamView,
     Board: tasksView,
@@ -1393,6 +1369,12 @@ function editAiPolicy() {
   );
 }
 function requirementsView() {
+  const coverage = new Map();
+  for (const task of data.tasks) {
+    if (!task.requirement_id) continue;
+    if (!coverage.has(task.requirement_id)) coverage.set(task.requirement_id, []);
+    coverage.get(task.requirement_id).push(task);
+  }
   content(
     '<header class="shared-header"><h2>Requirements and evidence</h2>' +
       (leader() ? button("add-requirement", "Add requirement", true) : "") +
@@ -1404,6 +1386,17 @@ function requirementsView() {
             .join("") +
           "</ul></details>"
         : "") +
+      (data.requirements.length ? '<section class="bp-panel"><h2>Task coverage</h2><ul class="studio-coverage">' +
+        data.requirements.map((r) => {
+          const linked = coverage.get(r.id) || [];
+          const done = linked.filter((task) => task.status === "done").length;
+          return '<li><div><strong>' + escape(r.title) + '</strong><p>' +
+            (linked.length ? done + ' of ' + linked.length + ' linked tasks done' : 'No linked task') +
+            '</p></div><span class="studio-chip ' + (linked.length ? (done === linked.length ? "ok" : "") : "warn") + '">' +
+            (linked.length ? (done === linked.length ? "Complete" : "In progress") : "Gap") + '</span>' +
+            (linked.length ? '<details><summary>Linked tasks</summary><ul>' + linked.map((task) => '<li>' +
+              escape(task.title) + '</li>').join("") + '</ul></details>' : '') + '</li>';
+        }).join("") + '</ul></section>' : '') +
       data.requirements
         .map(
           (r) =>

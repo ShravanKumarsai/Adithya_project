@@ -213,7 +213,8 @@ export function mountBlueprint(ctx) {
   async function aiJSON(task, inputData, fallback) {
     if (permitted)
       try {
-        const response = await fetch("/api/assist", {
+        const response = await fetch("/api/ai/" + encodeURIComponent(task), {
+          signal: AbortSignal.timeout(50000),
           method: "POST",
           headers: {
             authorization: "Bearer " + session.access_token,

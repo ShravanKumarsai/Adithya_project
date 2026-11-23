@@ -1,3 +1,4 @@
+import { studioAI } from "./server/ai-service.mjs";
 import { github, isRepo } from "./server/github.mjs";
 import { assets } from 'studio:assets';
 import { supabasePublishableKey, supabaseUrl } from './src/lib/supabase-config.js';
@@ -147,6 +148,7 @@ export default {
       if (url.pathname.startsWith('/api/')) return json({error:'Sign in to view your workspace.'},401);
       return new Response('<!doctype html><title>Aithya Studio</title><main style="font:20px system-ui;padding:3rem"><h1>Aithya Studio</h1><p><a href="/signin-with-chatgpt?return_to=/">Sign in to your workspace</a></p></main>',{status:401,headers:{...responseHeaders,'content-type':'text/html; charset=utf-8'}});
     }
+    if (url.pathname.startsWith('/api/ai/')) return studioAI(request,env,url,user);
     if (url.pathname === '/api/assist') return studioAssist(request,env,url,user);
     if (url.pathname === '/api/setup/rulebook') return setupRulebookResponse(request,env,url,user);
     if (url.pathname === '/api/planning') return planningResponse(request,env,url,user);

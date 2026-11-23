@@ -43,6 +43,23 @@ const fixture = {
       preliminary_skills: [],
     },
   ],
+  project_plans: [
+    {
+      plan: {
+        summary: "Prepare the demo",
+        phases: [
+          {
+            title: "Build",
+            outcome: "Working demo",
+            tasks: ["Ship from saved plan"],
+          },
+        ],
+        risks: [],
+      },
+      model: "gemini-fixture",
+      updated_at: now,
+    },
+  ],
   project_ai_constraints: [
     {
       external_ai_apis_allowed: false,
@@ -245,12 +262,31 @@ const app = createServer(async (req, res) => {
         ),
       { key, token, metadata, exp },
     );
+    let draft, createdTask;
     await page.route("https://ekqfotmlnqqrbcizjtfz.supabase.co/**", (route) => {
       const req = route.request(),
         url = new URL(req.url()),
         table = url.pathname.split("/").at(-1);
       if (url.pathname.includes("/auth/"))
         return route.fulfill({ json: metadata });
+      if (table === "save_project_draft") {
+        draft = req.postDataJSON().p_content;
+        return route.fulfill({ json: { revision: 1 } });
+      }
+      if (table === "publish_project_draft") {
+        assert.equal(draft.project.name, "River Jam");
+        fixture.projects[0].name = draft.project.name;
+        return route.fulfill({ json: project });
+      }
+      if (table === "project_tasks" && req.method() === "POST") {
+        [createdTask] = req.postDataJSON();
+        fixture.project_tasks.push({
+          ...createdTask,
+          status: "open",
+          estimated_hours: 0,
+        });
+        return route.fulfill({ status: 201 });
+      }
       if (table === "project_task_totals") return route.fulfill({ json: [] });
       if (req.method() === "PATCH") return route.fulfill({ status: 204 });
       const single = req.headers().accept?.includes("object+json");
@@ -309,7 +345,32 @@ const app = createServer(async (req, res) => {
       .getByRole("button", { name: "Find details", exact: true })
       .click();
     await page.getByText("River Jam", { exact: true }).waitFor();
-    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Fill selected fields" }).click();
+    await page.locator("#step-1[aria-current=step]").waitFor();
+    assert.equal(await page.locator("#f-name").inputValue(), "River Jam");
+    assert.equal(
+      await page.locator("#f-submission_deadline").inputValue(),
+      "2027-02-03",
+    );
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await page
+      .getByRole("heading", { name: "River Jam", exact: true })
+      .waitFor();
+    await page.locator("#area-Plan").click();
+    await page.locator("#tab-AI-plan").click();
+    await page.getByRole("button", { name: "Review plan tasks" }).click();
+    await page
+      .locator('[name="requirement-0"]')
+      .selectOption(fixture.requirement_items[0].id);
+    await page.getByRole("button", { name: "Add selected tasks" }).click();
+    await page.getByText("Added 1 tasks to the board.").waitFor();
+    assert.equal(createdTask.title, "Ship from saved plan");
+    assert.equal(createdTask.requirement_id, fixture.requirement_items[0].id);
+    await page.locator("#tab-Setup").click();
+    await page.getByRole("heading", { name: "Task coverage" }).waitFor();
+    await page.getByText("0 of 1 linked tasks done").waitFor();
     await page
       .getByRole("navigation", { name: "Workspace", exact: true })
       .getByRole("link", { name: "Today", exact: true })

@@ -21,7 +21,7 @@ async function handle(req) {
   const url = new URL(req.url, "https://" + host);
   const route = url.pathname === "/api/studio" ?
     url.searchParams.get("studioRoute") : url.pathname.slice("/api/".length);
-  if (!routes.has(route)) return json("Unknown Studio API.", 404);
+  if (!routes.has(route) && !/^ai\/[a-z][a-z0-9_.]{1,50}$/.test(route || "")) return json("Unknown Studio API.", 404);
   url.pathname = "/api/" + route;
   url.searchParams.delete("studioRoute");
   if (!["GET","HEAD"].includes(req.method) && req.headers.origin !== url.origin)
