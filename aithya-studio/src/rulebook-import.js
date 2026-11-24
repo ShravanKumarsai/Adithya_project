@@ -1,3 +1,4 @@
+import { rulebookLimit } from "./lib/rulebook-limits.js";
 const fieldDefinitions = [
   [
     "project",
@@ -183,7 +184,7 @@ function cleanLine(line) {
     .trim();
 }
 
-export function rulebookSuggestions(text, draft) {
+export function rulebookSuggestions(text, draft, source) {
   const blocks = new Map();
   let active;
   let nonemptyLines = 0;
@@ -255,7 +256,19 @@ export function rulebookSuggestions(text, draft) {
   }
   if (deadlines.length && !blocks.has("project.submission_deadline"))
     blocks.set("project.submission_deadline", deadlines);
-  return suggestionsFromBlocks(blocks, draft);
+  return suggestionsFromBlocks(blocks, draft).map(suggestion => {
+    if (!source) return suggestion;
+    const values = blocks.get(suggestion.group + "." + suggestion.key) || [];
+    const comparable = text => text.normalize("NFKC").replace(/\s+/g, " ").trim();
+    const hits = (source.pages || []).filter(page => values.every(value =>
+      comparable(page.text).includes(comparable(value))));
+    return {...suggestion, source:{
+      name:source.name,
+      page:hits.length === 1 ? hits[0].number : null,
+      quote:values.join(" ").slice(0,320),
+      confidence:"Label match",
+    }};
+  });
 }
 
 export function scannedRulebookSuggestions(fields, draft) {
@@ -317,20 +330,26 @@ function suggestionsFromBlocks(blocks, draft) {
 
 export function applyRulebookSuggestions(draft, suggestions) {
   const applied = [];
-  for (const { group, key, label, value } of suggestions) {
+  for (const { group, key, label, value, source } of suggestions) {
     draft[group] ||= {};
     if (!blank(draft[group][key])) continue;
     draft[group][key] = value;
+    if (source) {
+      draft.sources ||= {};
+      draft.sources[group + "." + key] = source;
+    }
     if (key === "workflow_content") draft.project.workflow_status = "provided";
     applied.push(label);
   }
   return applied;
 }
 
-export async function readRulebook(file) {
-  if (file.size > 10 * 1024 * 1024) throw Error("Choose a file under 10 MB.");
-  if (/\.(txt|md)$/i.test(file.name))
-    return (await file.text()).slice(0, 120000);
+export async function readRulebook(file, { withPages = false } = {}) {
+  if (file.size > rulebookLimit) throw Error("Choose a rulebook up to 8 MB.");
+  if (/\.(txt|md)$/i.test(file.name)) {
+    const text = (await file.text()).slice(0, 120000);
+    return withPages ? {text, pages:[]} : text;
+  }
   if (!/\.pdf$/i.test(file.name))
     throw Error("Choose a PDF, Markdown, or text file.");
   const pdfjs = await import("/rulebook-pdf.mjs");
@@ -350,11 +369,13 @@ export async function readRulebook(file) {
         "This rulebook has over 50 pages. Paste the relevant sections.",
       );
     let extracted = "";
+    const pages = [];
     for (
       let number = 1;
       number <= pdf.numPages && extracted.length < 120000;
       number++
     ) {
+      const offset = extracted.length;
       const page = await pdf.getPage(number);
       const { items } = await page.getTextContent();
       let previousY;
@@ -371,13 +392,19 @@ export async function readRulebook(file) {
         if (extracted.length >= 120000) break;
         previousY = y;
       }
+      if (withPages) pages.push({number,text:extracted.slice(offset)});
       extracted += "\n";
     }
     if (!extracted.trim())
       throw Error(
         "This PDF has no readable text. Paste the relevant rules instead.",
       );
-    return extracted.slice(0, 120000);
+    const text = extracted.slice(0, 120000);
+    return withPages ? {text,pages} : text;
+  } catch (error) {
+    if (error.name === "PasswordException")
+      throw Error("This PDF is password-protected. Unlock it or paste the relevant text.");
+    throw error;
   } finally {
     await task.destroy();
   }

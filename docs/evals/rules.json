@@ -1,0 +1,72 @@
+[
+  {
+    "name": "HackWithAditya",
+    "source": "https://hackathon.adityauniversity.in/rules",
+    "input": "Coding assistants and AI APIs are allowed and must be disclosed",
+    "expectedField": "ai.other_requirements",
+    "expectedMeaning": "Disclosure is required when coding assistants or AI APIs are used."
+  },
+  {
+    "name": "ETHGlobal",
+    "source": "https://ethglobal.com/rules",
+    "input": "you must also use version control for your code throughout the course of the event",
+    "expectedField": "requirements.mandatory_requirements",
+    "expectedMeaning": "Use version control throughout the event."
+  },
+  {
+    "name": "Chrome Built-in AI Challenge",
+    "source": "https://googlechromeai.devpost.com/rules",
+    "input": "Written and video parts of Entries must be in English.",
+    "expectedField": "requirements.restrictions",
+    "expectedMeaning": "Both written and video submissions must use English."
+  },
+  {
+    "name": "Chrome Built-in AI Challenge 2025",
+    "source": "https://googlechromeai2025.devpost.com/rules",
+    "input": "Entries must be received by 11:45:00 P.M., Pacific Time (PT) on October 31, 2025.",
+    "expectedField": "project.submission_deadline",
+    "expectedMeaning": "2025-10-31 at 23:45 in America/Los_Angeles"
+  },
+  {
+    "name": "Gemini 3 Hackathon",
+    "source": "https://gemini3.devpost.com/rules",
+    "input": "If it is longer than 3 minutes, only the first 3 minutes may be evaluated",
+    "expectedField": "requirements.restrictions",
+    "expectedMeaning": "A longer video may be assessed only on its first three minutes. Do not infer disqualification."
+  },
+  {
+    "name": "Code with Kiro",
+    "source": "https://kiro.devpost.com/rules",
+    "input": "The code repository must be public with an approved OSI Open Source License",
+    "expectedField": "requirements.mandatory_requirements",
+    "expectedMeaning": "The source repository must be public and use an OSI-approved license."
+  },
+  {
+    "name": "Agent Development Kit Hackathon",
+    "source": "https://googlecloudmultiagents.devpost.com/rules",
+    "input": "The Project must be built using Agent Development Kit.",
+    "expectedField": "project.technology_stack",
+    "expectedMeaning": "Agent Development Kit is required."
+  },
+  {
+    "name": "AWS Game Builder Challenge",
+    "source": "https://awsdevchallenge.devpost.com/rules",
+    "input": "must use Amazon Q to aid in the development or optimization of their Project.",
+    "expectedField": "project.technology_stack",
+    "expectedMeaning": "Amazon Q must be used in development or optimization."
+  },
+  {
+    "name": "World’s Largest Hackathon",
+    "source": "https://worldslargesthackathon.devpost.com/rules",
+    "input": "The final, submitted project must include the “Built on Bolt” badge.",
+    "expectedField": "requirements.mandatory_requirements",
+    "expectedMeaning": "Include the Built on Bolt badge in the final submission."
+  },
+  {
+    "name": "AI Partner Catalyst",
+    "source": "https://ai-partner-catalyst.devpost.com/rules",
+    "input": "Your solution must use both Google Cloud products and the specific Partner's products relevant to your chosen challenge",
+    "expectedField": "project.technology_stack",
+    "expectedMeaning": "Use Google Cloud and the relevant products of the selected partner."
+  }
+]

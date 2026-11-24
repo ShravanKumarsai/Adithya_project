@@ -47,19 +47,19 @@ Portfolio profiles and case studies stay private to their Supabase owner. The ed
 
 ## Scanned rulebooks and photos
 
-Set `GEMINI_SETUP_API_KEY` as a secret on the Sites deployment to enable Gemini scanning from All Projects and Project setup. This credential is used solely by the setup rulebook route. The route accepts an explicitly selected PDF, JPEG, PNG, or WebP up to 8 MB and returns suggested setup details for review. Text and text-based PDFs can also be read locally. Existing project planning keeps using the encrypted per-project credential supplied by its leader.
+Set `GEMINI_SETUP_API_KEY` as a server secret for rulebook import and the project and account setup conversations. Rulebook import accepts a PDF, JPEG, PNG, or WebP up to 8 MB. Project setup chat accepts up to four supported PDFs or images totaling 3 MB per message. Gemini returns editable suggestions that stay in the draft until approval. Text and text-based PDFs can also be read locally by the rulebook importer. Existing project planning uses the encrypted per-project credential supplied by its leader.
 
 ## Blueprint workspace on Vercel
 
-Run `npm ci`, `npm run build`, then `node vercel-build.mjs` from this directory. Vercel serves the sheets at /shared and routes authenticated /api requests to api/studio.mjs. Postgres storage requires AITHYA_DATABASE_URL with the aithya_vercel_app role. PROJECT_GEMINI_KEY_SECRET protects per-project tokens. GEMINI_SETUP_API_KEY is used only for rulebook import. The blueprint features require no additional provider secrets.
+Run `npm ci`, `npm run build`, then `node vercel-build.mjs` from this directory. Vercel serves the sheets at `/shared` and routes authenticated `/api` requests to `api/studio.mjs`. Postgres storage requires `AITHYA_DATABASE_URL` with the `aithya_vercel_app` role. `PROJECT_GEMINI_KEY_SECRET` protects per-project tokens. Set `GEMINI_SETUP_API_KEY` for site-wide rulebook import and guided setup.
 
 The blueprint_sheets migration adds task skills and dependencies, milestones, evidence, messages, votes, private attachment metadata, an AI audit table, and member-scoped Realtime. Digests use UTC. A minute-by-minute pg_cron job posts scheduled summaries and records overdue milestones. Team chat downloads use authenticated Storage requests. Drafts from POST /api/assist use the project policy and encrypted team key. Basic drafts work offline from Gemini. Shared meeting notes entered in the Chat sheet can be submitted for summarization. Private learning goals and portfolios are excluded from AI input.
 
 The collaboration checks in tests/blueprint-access.sql run inside a rolled-back transaction with separate owner, member and outsider identities.
 
-## Night Studio and personal workspaces
+## Personal workspaces
 
-The shared workspace groups project sheets into Workspace, Teamwork, Project and Studio. The default Night Studio theme and the light theme both fit narrow screens. Vercel serves an installation manifest for the mobile home-screen experience.
+The shared workspace groups project sheets into Today, Rules, Work, Team, and Submit. Light and Blueprint fit narrow screens. Vercel serves an installation manifest for the mobile home-screen experience.
 
 Apply `20261122153000_studio_personal_workspaces.sql` after the blueprint migration to enable personal dashboards, participant-only direct chats, project profiles, opt-in AI credit tracking and integration settings. The project pages detect whether this migration is available. Project leads manage encrypted Gemini and Vercel keys in Settings. Public GitHub repositories remain available through Activity.
 
@@ -77,7 +77,11 @@ The production migrations follow the blueprint and personal workspace migrations
 
 ## Final blueprint workflow
 
-The project rail follows the final 18-sheet order. Blueprint, Light and Midnight support a shared accent and icon-size preference under Portfolio. The detective planning board keeps its own palette, renders dependency strings and stores each member's own study notes.
+The workspace rail opens Project insights, Shared projects, Portfolio, AI usage, My profile, and Settings. The Work area opens Board, Plan, and Timeline directly. Light and Blueprint support shared accent and icon-size preferences under Portfolio.
+
+## Guided setup and Google sign-in
+
+Enable the Google provider in Supabase Auth with the Google OAuth client configured for the Supabase callback URL. Allow each intended Studio URL ending in `/shared` in Supabase Auth's redirect list. Apply `20261124135038_portal_collaboration.sql`, `20261124141456_portal_team_lifecycle.sql`, and `20261124150400_guided_studio_onboarding.sql` in order. The guided setup migration enables private account interviews, single-use join links, task priorities, and delivery records. Vercel deployment connections remain optional for team members.
 
 The final-workflows migration adds team stand-ups, private study notes, timeline proposal approval, and immutable close snapshots with private portfolio history. The companion GitHub token migration adds encrypted repository credentials in the server-only runtime schema. The same authenticated /api/assist route handles Quick add, case-file explanations, task ideas, daily digests, stand-up merges and report notes. The project policy controls AI access and all draft workflows have Basic results. There are no new environment secrets.
 
@@ -98,3 +102,21 @@ For eligible Claude subscriptions, the connector reads the 5-hour and weekly usa
 Codex readings cover the Codex allowance. For regular ChatGPT chats, Gemini, Copilot, or another tool, use **Add manual tracker** to record messages, requests, or tokens and set a scheduled reset reminder.
 
 [Codex App Server account API](https://developers.openai.com/codex/app-server/#accounts)
+
+## AI-first redesign foundation
+
+The first review phase replaces the Worker’s source splicing with module imports, consolidates the active styles into `ui/shared.css`, and adds a responsive workspace shell. Today uses task assignments, dependencies, due dates and the private notification feed. Its next action is selected from workspace data. External AI generation remains separate.
+
+### Legacy data
+
+The unused notebook frontend and its API routes are retired. The historical D1 migrations and their `project_notes` and `workspace_projects` tables are retained. The Vercel equivalents and stored notebook files are retained too. No DROP, DELETE or data migration is part of this change. If legacy records are needed, export the tables and file objects through the hosting provider’s authenticated dashboard, confirm the exported row and file counts, and keep the originals until the export is verified. Confirm a retention or removal plan before changing these stores.
+
+### Tests
+
+Run `npm ci`, `npm run lint`, `npm test`, and `npm run build && node vercel-build.mjs`. Then run `npx playwright install chromium` and `npm run test:browser`. The browser test uses fixtures for Supabase and integrations. It exercises the redesigned mobile shell, keyboard tabs and command palette, rulebook review, and Today. It does not send email or consume provider usage.
+
+### Rulebook and task review
+
+Project setup starts with a source step. Import a PDF, photo, or pasted rules, then review the filled brief, rules, and policy fields. Manual entry opens the same review step. The Plan area has an AI plan sheet with template cards and data disclosure. Saving a generated plan and adding selected tasks are separate actions. A lead can edit task titles and link each task to a requirement before adding them. Project setup shows existing task coverage and gaps.
+
+The Worker serves existing Gemini capabilities through `POST /api/ai/<capability>` alongside previous routes for compatibility. Structured drafts still use their provider-specific validators and policy checks. Recognized credentials and email addresses are removed from text before planning or assistance requests. The file importer sends the selected PDF or image as disclosed in the import dialog. This release adds no new database tables or RLS rules.

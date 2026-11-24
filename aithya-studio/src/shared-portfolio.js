@@ -103,7 +103,7 @@ function downloadPortfolio(profile, entries, escape, appearance) {
   );
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "aithya-portfolio.html";
+  anchor.download = "draftdeck-portfolio.html";
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
@@ -290,7 +290,6 @@ export async function renderPortfolio({
           "theme",
           "Theme",
           [
-            ["dark", "Midnight"],
             ["light", "Light"],
             ["blueprint", "Blueprint"],
           ],

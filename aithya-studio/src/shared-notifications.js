@@ -23,6 +23,10 @@ export function notifications({
     "projects.update": "Project brief or status updated",
     "project_members.insert": "Teammate added",
     "project_members.update": "Team membership or profile updated",
+    "team.member.joined": "A teammate joined",
+    "task.major.completed": "A high-priority task was completed",
+    "milestone.approved": "A timeline change was approved",
+    "report.closed": "The final report was published",
     "requirement_items.insert": "Requirement added",
     "requirement_items.update": "Requirement updated",
     "project_tasks.insert": "Task added",
@@ -31,6 +35,17 @@ export function notifications({
     "project_ai_constraints.update": "AI policy updated",
     "project_plans.insert": "Gemini plan saved",
     "project_plans.update": "Gemini plan updated",
+  };
+  const destination = type => {
+    if (type.startsWith("credits.")) return "AI credits";
+    if (type.startsWith("chat.")) return "Chats";
+    if (type.startsWith("milestone.")) return "Timeline";
+    if (type.startsWith("project_members.") || type.startsWith("team.")) return "Team";
+    if (type.startsWith("project_tasks.") || type.startsWith("task.")) return "Board";
+    if (type.startsWith("project_plans.")) return "AI plan";
+    if (type.startsWith("report.")) return "Report";
+    if (["requirement_items","project_documents","project_ai_constraints"].some(prefix=>type.startsWith(prefix+"."))) return "Project setup";
+    return "Overview";
   };
   let request = 0;
   function close() {
@@ -85,13 +100,15 @@ export function notifications({
                 (event) =>
                   '<li class="' +
                   (event.unread ? "notification-unread" : "") +
+                  '"><button type="button" class="notification-event" data-open-project="' + escape(id) +
+                  '" data-sheet="' + escape(destination(event.event_type)) + '" data-read-event="' + escape(event.event_id) +
                   '"><span>' +
                   escape(names[event.event_type] || "Project activity") +
                   '</span><time datetime="' +
                   escape(event.event_time) +
                   '">' +
                   escape(when(event.event_time)) +
-                  "</time></li>",
+                  "</time></button></li>",
               )
               .join("") +
             "</ol></section>",
@@ -126,8 +143,13 @@ export function notifications({
                 .single(),
             );
             if (getSession()?.user.id !== userId) return;
+            const eventId=Number(button.dataset.readEvent);
+            if (eventId > 0) await rpc("mark_project_notifications_read",{
+              p_project_id:project.id,p_event_id:eventId,
+            }).catch(()=>{});
             close();
-            await openProject(project);
+            await openProject(project,button.dataset.sheet || "Overview");
+            void refresh();
           } catch (error) {
             notify(error.message);
             button.disabled = false;

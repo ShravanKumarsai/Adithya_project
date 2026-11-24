@@ -135,12 +135,12 @@ export function mountReport(
     result(
       db
         .from("studio_reports")
-        .select("closed_at,snapshot")
+        .select("closed_at,snapshot" + ("studio_intake_applied" in project ? ",delivery" : ""))
         .eq("project_id", project.id)
         .maybeSingle(),
     ),
-    project.repository
-      ? fetch("/api/activity?project=" + encodeURIComponent(project.id), {
+    project.repository || project.vercel_project_id
+      ? fetch("/api/activity?report=1&project=" + encodeURIComponent(project.id), {
           headers: { authorization: "Bearer " + session.access_token },
         })
           .then((r) => (r.ok ? r.json() : null))
@@ -158,12 +158,34 @@ export function mountReport(
               "No usage shared",
           }))
         : live;
-      for (const row of rows) {
-        const recent = activity?.contributors?.find(
-          (c) => c.login.toLowerCase() === row.name.toLowerCase(),
-        );
-        row.commits = recent?.commits ?? "—";
-      }
+      const periodStart=project.start_date || project.created_at?.slice(0,10) || "";
+      const periodEnd=project.submission_deadline || "";
+      const dateSpan=(start,end)=> {
+        const a=Date.parse(start), b=Date.parse(end);
+        return Number.isFinite(a)&&Number.isFinite(b)&&b>=a?(b-a)/3600000:null;
+      };
+      const commits = activity?.reportCommits;
+      const delivery=snapshot?.delivery && Object.keys(snapshot.delivery).length ? snapshot.delivery : {
+        start:periodStart,end:periodEnd,
+        commit_first:commits?.first || "",commit_last:commits?.last || "",
+        commits_sample:commits?.count ?? null,commits_truncated:commits?.truncated || false,
+        url:activity?.deployment?.status === "Ready" ? activity.deployment.url : "",
+        contributions:Object.fromEntries(rows.flatMap(row => {
+          const name = row.name.trim().toLowerCase();
+          if (rows.some(teammate=>teammate.id !== row.id && teammate.name.trim().toLowerCase() === name)) return [];
+          const contributor = commits?.contributors.find(item=>[item.login,...item.names].some(alias=>alias.trim().toLowerCase() === name));
+          return contributor ? [[row.id,contributor.commits]] : [];
+        })),
+      };
+      for (const row of rows) row.commits = Number.isInteger(delivery.contributions?.[row.id]) ? delivery.contributions[row.id] : "—";
+      const days=dateSpan(delivery.start,delivery.end);
+      const commitSpan=dateSpan(delivery.commit_first,delivery.commit_last);
+      const finalLink=typeof delivery.url==="string" && /^https:\/\/[^\s]+$/i.test(delivery.url) ? delivery.url : "";
+      const timing='<section class="bp-panel"><h3>Delivery record</h3><dl class="delivery-record">' +
+        '<div><dt>Hackathon dates</dt><dd>' + escape(days===null?"Dates not set":delivery.start+" – "+delivery.end+" · "+(Math.floor(days/24)+1)+" calendar days") + '</dd></div>' +
+        '<div><dt>Observed commit span</dt><dd>' + escape(commitSpan===null ? (delivery.commits_sample === 0 ? "No commits during this period" : "No commit dates available") :
+          commitSpan.toFixed(1)+" hours across "+delivery.commits_sample+" default-branch commits"+(delivery.commits_truncated ? " (first 500 reviewed)" : "")) + '</dd></div>' +
+        '<div><dt>Final project</dt><dd>' + (finalLink?'<a target="_blank" rel="noreferrer" href="'+escape(finalLink)+'">Open final project</a>':'Link not recorded') + '</dd></div></dl></section>';
       const totalTasks = snapshot
         ? rows.reduce((sum, r) => sum + r.assigned, 0)
         : data.tasks.length;
@@ -183,15 +205,15 @@ export function mountReport(
         "</strong></div><div><small>Logged hours</small><strong>" +
         totalHours +
         "</strong></div><div><small>Reporting period</small><strong>" +
-        (snapshot ? "Closed" : finished ? "After deadline" : "In progress") +
-        "</strong></div></div>" +
+        (snapshot ? "Published" : finished ? "After deadline" : "In progress") +
+        "</strong></div></div>" + timing +
         '<div class="studio-table-wrap" tabindex="0" aria-label="Member contributions"><table class="studio-table"><thead><tr>' +
         [
           "Member",
           "Delivery",
           "On time / late",
           "Logged",
-          "Recent commits",
+          "Hackathon commits",
           "Studio AI",
           "Shared account usage",
         ]
@@ -233,7 +255,7 @@ export function mountReport(
           )
           .join("") +
         "</tbody></table></div>" +
-        '<p class="shared-muted">On-time results use dated completions and UTC calendar dates. Studio AI counts successful assistance calls. Commit counts use the recent GitHub feed and matching names. Shared account totals reflect current consent and recorded usage windows.</p>' +
+        '<p class="shared-muted">On-time results use dated completions and UTC calendar dates. Studio AI counts successful assistance calls. Commit counts use the hackathon dates and match GitHub author names to project members. Shared account totals reflect current consent and recorded usage windows.</p>' +
         (rows.some(
           (r) =>
             r.name === data.members.find((m) => m.user_id === uid)?.full_name,
@@ -245,14 +267,23 @@ export function mountReport(
           .querySelector("#studio-report-content")
           .insertAdjacentHTML(
             "beforeend",
-            '<button type="button" class="button subtle" id="report-close">Close hackathon report</button>',
+            '<button type="button" class="button subtle" id="report-close">Publish final report</button>',
           );
         bind("report-close", () =>
           modal(
-            "Close hackathon report",
-            "<p>Save a final copy of delivery, logged time and Studio AI totals. This also records a private project-history entry for each teammate.</p>",
-            () => rpc("close_studio_report", { p_project: project.id }),
+            "Publish hackathon report",
+            '<p>Save the delivery record and each member’s logged time and contributions.</p>' +
+              '<label>Final project URL (optional)<input name="delivery_url" type="url" maxlength="1000" value="' + escape(finalLink) + '"></label>',
+            async form => {
+              const link=String(form.get("delivery_url")||"").trim();
+              if (link && !/^https:\/\/[^\s]+$/i.test(link)) throw Error("Use an HTTPS project URL.");
+              if ("studio_intake_applied" in project)
+                await rpc("publish_studio_delivery",{p_project:project.id,p_delivery:{...delivery,url:link}});
+              else await rpc("close_studio_report",{p_project:project.id});
+              notify("Hackathon report published.");
+            },
             refresh,
+            "Publish report",
           ),
         );
       }
@@ -269,6 +300,7 @@ export function mountReport(
             "Late",
             "Unknown",
             "Logged hours",
+            "Hackathon commits",
             "Studio AI calls",
             "Shared usage",
             "Contributions",
@@ -282,10 +314,16 @@ export function mountReport(
             r.late,
             r.unknown,
             r.hours,
+            r.commits,
             r.studioCalls,
             r.sharedUsage,
             r.contributions.join("; "),
           ]),
+          [],
+          ["Hackathon start", delivery.start || ""],
+          ["Hackathon deadline", delivery.end || ""],
+          ["Observed commit span (hours)", commitSpan?.toFixed(1) ?? ""],
+          ["Final project URL", finalLink],
         ];
         const url = URL.createObjectURL(
           new Blob(
@@ -295,7 +333,7 @@ export function mountReport(
         );
         const link = document.createElement("a");
         link.href = url;
-        link.download = "aithya-project-report.csv";
+        link.download = "draftdeck-project-report.csv";
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
       });
@@ -310,6 +348,7 @@ export function mountReport(
                   " completed tasks · " +
                   totalHours +
                   " logged hours",
+                ...(finalLink ? ["Final project · " + finalLink] : []),
                 ...rows.map(
                   (r) =>
                     r.name +

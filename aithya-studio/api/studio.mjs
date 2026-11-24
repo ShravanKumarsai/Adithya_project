@@ -1,13 +1,14 @@
+import { rulebookLimit } from "../src/lib/rulebook-limits.js";
 import worker from "../dist/server/index.js";
 import {supabaseUrl, supabasePublishableKey} from "../src/lib/supabase-config.js";
-import {DB, FILES, storeScanPart, consumeScan} from "../server/vercel-storage.mjs";
+import {DB, storeScanPart, consumeScan} from "../server/vercel-storage.mjs";
 
 const routes = new Set([
   "assist", "github/token", "setup/rulebook", "setup/rulebook/part", "planning", "planning/key", "vercel/token",
-  "activity", "notebook", "documents", "projects", "profile",
+  "activity", "profile", "usage", "intake",
 ]);
 const maxBody = 4 * 1024 * 1024;
-const env = {...process.env, DB, FILES};
+const env = {...process.env, DB};
 const scanMime = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const json = (error, status) => Response.json({error}, {
@@ -20,11 +21,11 @@ async function handle(req) {
   const url = new URL(req.url, "https://" + host);
   const route = url.pathname === "/api/studio" ?
     url.searchParams.get("studioRoute") : url.pathname.slice("/api/".length);
-  if (!routes.has(route)) return json("Unknown Studio API.", 404);
+  if (!routes.has(route) && !/^ai\/[a-z][a-z0-9_.]{1,50}$/.test(route || "")) return json("Unknown Studio API.", 404);
   url.pathname = "/api/" + route;
   url.searchParams.delete("studioRoute");
   if (!["GET","HEAD"].includes(req.method) && req.headers.origin !== url.origin)
-    return json("Open this action from Aithya Studio.", 403);
+    return json("Open this action from DraftDeck.", 403);
 
   const headers = new Headers();
   for (const name of ["authorization", "content-type", "origin", "content-length"]) {
@@ -32,7 +33,7 @@ async function handle(req) {
   }
   const authorization = headers.get("authorization");
   if (!authorization?.startsWith("Bearer "))
-    return json("Sign in to Aithya Studio.", 401);
+    return json("Sign in to DraftDeck.", 401);
   let identity;
   try {
     identity = await fetch(supabaseUrl + "/auth/v1/user", {
@@ -45,7 +46,7 @@ async function handle(req) {
   if (!identity.ok)
     return json("Your session has expired. Sign in again.", identity.status >= 500 ? 503 : 401);
   const account = await identity.json();
-  if (!account.id) return json("Sign in to Aithya Studio.", 401);
+  if (!account.id) return json("Sign in to DraftDeck.", 401);
   // These values come from Supabase, never from incoming identity headers.
   headers.set("oai-authenticated-user-id", account.id);
   if (account.email) headers.set("oai-authenticated-user-email", account.email);
@@ -78,9 +79,17 @@ async function handle(req) {
       if (rows.length !== count || rows.some((row, index) => row.part !== index))
         return json("Incomplete rulebook upload. Choose the file again.", 400);
       options.body = Buffer.concat(rows.map(row => row.bytes));
-      if (options.body.length > 8 * 1024 * 1024) return json("Choose a file up to 8 MB.", 413);
+      if (options.body.length > rulebookLimit) return json("Choose a file up to 8 MB.", 413);
       headers.set("content-length", String(options.body.length));
     }
+  }
+  if (env.STUDIO_USE_AI_EDGE === "true" &&
+      (["assist","setup/rulebook","planning"].includes(route) || route.startsWith("ai/"))) {
+    const edge = supabaseUrl + "/functions/v1/studio-ai/" + route + url.search;
+    // The trusted host sets the origin for same-origin GETs that omit the header.
+    headers.set("origin", url.origin);
+    headers.set("apikey", supabasePublishableKey);
+    return fetch(edge, {...options, redirect:"error", signal:AbortSignal.timeout(75000)});
   }
   return worker.fetch(new Request(url, options), env);
 }

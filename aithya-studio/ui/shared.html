@@ -1,30 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-blueprint="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Aithya Project Studio</title>
-    <meta name="theme-color" content="#08090d" />
+    <title>DraftDeck</title>
+    <meta name="theme-color" content="#f8fafc" />
     <link rel="manifest" href="/studio.webmanifest" />
     <link rel="icon" type="image/png" href="/icons/studio-192.png" />
-    <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/print.css" />
     <link rel="stylesheet" href="/shared.css" />
     <script type="module" src="/shared.bundle.js"></script>
   </head>
   <body>
     <div class="shared-shell">
       <header class="shared-top">
-        <a href="/" class="wordmark">aithya<span>.</span></a>
-        <nav>
-          <a href="/">Project insights</a
-          ><a href="/shared">Shared projects</a>
-        </nav>
+        <a href="/" class="wordmark" data-studio-route>DraftDeck</a>
         <div class="shared-top-actions">
-          <button class="button subtle" id="blueprint-theme" type="button">Use light theme</button>
-          <button class="button subtle" id="portfolio-nav" hidden>
-            Portfolio
-          </button>
+          <button class="button subtle" id="studio-command" type="button" hidden>Commands</button>
           <div class="notification-anchor">
             <button
               type="button"
@@ -59,12 +50,26 @@
           <div id="account"></div>
         </div>
       </header>
+      <nav id="studio-global-nav" class="studio-global-nav" aria-label="Workspace" hidden>
+        <a href="/" data-studio-route>Project insights</a>
+        <a href="/shared" data-studio-route>Shared projects</a>
+        <a href="/shared?view=portfolio" data-studio-route>Portfolio</a>
+        <a href="/shared?view=usage" data-studio-route>AI usage</a>
+        <a href="/shared?view=profile" data-studio-route>My profile</a>
+        <a href="/shared?view=settings" data-studio-route>Settings</a>
+      </nav>
       <main id="shared-main" class="shared-main">
-        <p>Opening your workspace…</p>
+        <div class="studio-skeleton" role="status"><span class="studio-sr">Opening your workspace</span><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i></div>
       </main>
       <div id="notice" role="status" aria-live="polite"></div>
     </div>
-    <dialog id="shared-dialog">
+    <dialog id="command-dialog" aria-labelledby="command-title">
+      <header><h2 id="command-title">Commands</h2><form method="dialog"><button class="button subtle">Close</button></form></header>
+      <label class="studio-sr" for="command-query">Search commands and projects</label>
+      <input id="command-query" type="search" placeholder="Find a command or project" maxlength="100" autofocus />
+      <div id="command-results" aria-live="polite"></div>
+    </dialog>
+    <dialog id="shared-dialog" aria-labelledby="shared-title">
       <header>
         <h2 id="shared-title"></h2>
         <button type="button" id="shared-close" aria-label="Close">

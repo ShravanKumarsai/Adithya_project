@@ -1,11 +1,13 @@
-const styles = ["blueprint", "light", "dark"];
+const styles = ["blueprint", "light"];
 const accents = ["blue", "green", "amber", "rose"];
 const sizes = ["small", "medium", "large"];
+export function preferredTheme() {
+  const saved = localStorage.getItem("aithya.theme");
+  return styles.includes(saved) ? saved : null;
+}
 export function studioAppearance() {
   return {
-    theme: styles.includes(localStorage.getItem("aithya.theme"))
-      ? localStorage.getItem("aithya.theme")
-      : "blueprint",
+    theme: preferredTheme() || "blueprint",
     accent: accents.includes(localStorage.getItem("aithya.accent"))
       ? localStorage.getItem("aithya.accent")
       : "blue",
@@ -14,13 +16,15 @@ export function studioAppearance() {
       : "medium",
   };
 }
-export function applyStudioAppearance(p = studioAppearance()) {
+export function applyStudioAppearance(p = studioAppearance(), {remember = true} = {}) {
   const root = document.documentElement;
-  root.dataset.blueprint = styles.includes(p.theme) ? p.theme : "blueprint";
+  const theme = styles.includes(p.theme) ? p.theme : "light";
+  root.dataset.blueprint = theme;
   root.dataset.accent = accents.includes(p.accent) ? p.accent : "blue";
   root.dataset.icon = sizes.includes(p.icon) ? p.icon : "medium";
+  if (!remember) return;
   for (const [key, value] of [
-    ["theme", root.dataset.blueprint],
+    ["theme", theme],
     ["accent", root.dataset.accent],
     ["icon", root.dataset.icon],
   ])

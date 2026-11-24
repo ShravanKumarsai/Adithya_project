@@ -1,5 +1,20 @@
-@import url("https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Special+Elite&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Mono:wght@700&display=swap");
+*, *::before, *::after { box-sizing: border-box }
+body { margin: 0 }
+:is(h1,h2,h3,p) { margin: 0 }
+[hidden] { display: none !important }
+a { color: inherit }
+button, input, textarea, select { font: inherit }
+button, summary { cursor: pointer }
+button:disabled { cursor: wait; opacity: .65 }
+button, a { touch-action: manipulation }
+input:not([type=checkbox],[type=radio]), textarea, select { width: 100% }
+textarea { resize: vertical }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); font-weight: 600; padding: 7px 11px; min-height: var(--target); text-decoration: none }
+.badge { display: inline-flex; align-items: center; padding: 3px 8px; color: var(--muted); border: 1px solid var(--line) }
+.badge.ready { color: var(--green) }.badge.warn { color: var(--yellow) }.badge.error { color: var(--red) }
+.text-link { text-decoration: underline; text-underline-offset: .2em }
+dialog { width: min(94vw, 680px); max-height: 90dvh; padding: var(--space-4); border: 1px solid var(--line) }
+dialog::backdrop { background: #050913bb }
 .shared-shell {
   max-width: 1450px;
   margin: auto;
@@ -32,13 +47,11 @@
 }
 .shared-main h2 {
   font:
-    600 1.65rem "Archivo Narrow",
-    sans-serif;
+    600 1.65rem var(--ui);
 }
 .shared-main h3 {
   font:
-    600 1.3rem "Archivo Narrow",
-    sans-serif;
+    600 1.3rem var(--ui);
 }
 .shared-main p {
   line-height: 1.6;
@@ -381,8 +394,7 @@
 }
 #notification-title {
   font:
-    600 1.3rem "Archivo Narrow",
-    sans-serif;
+    600 1.3rem var(--ui);
 }
 #notification-list {
   max-height: min(58vh, 430px);
@@ -525,8 +537,8 @@
 }
 
 /* Blueprint project sheets */
-:root {--page:#0c3a8e;--text:#f1f6ff;--muted:#a8c3f0;--line:rgba(225,238,255,.42);--panel:rgba(6,28,84,.55);--raised:rgba(6,28,84,.92);--accent:#f1f6ff;--ink:#0c3a8e;--yellow:#ffd36b;--green:#8cf0c4;--red:#ff9c9c;--grid:225,238,255;--display:"Space Mono",monospace;color-scheme:dark}
-:root[data-blueprint=light]{--page:#e9f0fc;--text:#0a2a6e;--muted:#3d5a9c;--line:rgba(15,70,170,.5);--panel:rgba(255,255,255,.6);--raised:rgba(255,255,255,.94);--accent:#0d4fc4;--ink:white;--yellow:#a85f00;--green:#0d7a4e;--red:#b3302f;--grid:15,70,170;color-scheme:light}
+
+
 body{background-color:var(--page);background-image:linear-gradient(rgba(var(--grid),.075) 1px,transparent 1px),linear-gradient(90deg,rgba(var(--grid),.075) 1px,transparent 1px),linear-gradient(rgba(var(--grid),.2) 1px,transparent 1px),linear-gradient(90deg,rgba(var(--grid),.2) 1px,transparent 1px);background-size:20px 20px,20px 20px,100px 100px,100px 100px;background-attachment:fixed;color:var(--text);font:400 14px/1.55 "IBM Plex Sans",system-ui,sans-serif}
 .shared-shell{max-width:1480px;padding-inline:clamp(16px,3vw,48px)}
 body :is(input,textarea,select,button,.button,dialog,.bp-card,.insight-summary){border-radius:0}
@@ -565,18 +577,8 @@ body .shared-main h3{font-size:.95rem}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 /* Night studio */
-:root {
-  --page:#08090d;--text:#f0f2f6;--muted:#a9afbf;--line:#333847;
-  --panel:#11131c;--raised:#1b1e2a;--accent:#c7d5fa;--ink:#101525;
-  --yellow:#edb978;--green:#8bd7b5;--red:#ffa3aa;--grid:114,126,162;
-  --recess:#0a0b11;--edge:#444b60;--lit:#212639;
-}
-:root[data-blueprint=light] {
-  --page:#e9edf5;--text:#1b2542;--muted:#485673;--line:#a6b0c4;
-  --panel:#f4f6fb;--raised:#fff;--accent:#233f89;--ink:#fff;
-  --yellow:#884f12;--green:#17694f;--red:#9d2d41;--grid:65,86,135;
-  --recess:#e0e6f1;--edge:#8796b3;--lit:#e5eafa;
-}
+
+
 body {
   background-image:radial-gradient(ellipse at 70% 0%,color-mix(in srgb,var(--lit) 65%,transparent),transparent 56%),
     linear-gradient(rgba(var(--grid),.075) 1px,transparent 1px),linear-gradient(90deg,rgba(var(--grid),.075) 1px,transparent 1px),
@@ -702,17 +704,16 @@ body .stage-done {fill:var(--green);background:var(--green)}
 .deadline-axis circle{stroke:var(--text);stroke-width:.75;fill:var(--raised)}.deadline-axis circle.completed{fill:var(--green)}
 .deadline-axis text{fill:var(--text);font:700 8px "Space Mono",monospace}.deadline-axis .completed+text{fill:#112219}
 .deadline-axis figcaption{display:flex;justify-content:space-between;gap:7px;font-size:clamp(.68rem,1vw,.83rem);color:var(--muted)}
-:root[data-blueprint=blueprint]{
- --page:#102752;--text:#eff5ff;--muted:#b4c8e8;--line:#496694;--panel:#142f60;--raised:#1b3a72;
- --accent:#ddeaff;--ink:#122857;--yellow:#ffcf82;--green:#99e5cb;--red:#ffa2ad;--grid:145,176,228;
- --recess:#11264b;--edge:#6788b7;--lit:#25467d;color-scheme:dark;
-}
+
 .bp-steps button{font:inherit;letter-spacing:inherit;text-transform:inherit;color:var(--muted);background:transparent;border:1px solid transparent;padding:.35rem .54rem;min-height:38px}
 .bp-steps button:hover,.bp-steps button[aria-current]{color:var(--text);background:var(--lit)}
 .bp-steps button[aria-current]{border-bottom:2px solid var(--accent)}
 
 /* Final blueprint sheets */
 :root,:root[data-blueprint=blueprint]{
+ --ui:"IBM Plex Sans",system-ui,sans-serif;--display:"Space Mono",monospace;--mono:"IBM Plex Mono",monospace;
+ --space-1:.35rem;--space-2:.65rem;--space-3:1rem;--space-4:1.5rem;--radius:4px;
+ --elevation:0 14px 36px #0003;--motion:120ms;--target:44px;
  --page:#0c3a8e;--text:#f1f6ff;--muted:#a8c3f0;--line:rgba(225,238,255,.42);
  --panel:rgba(6,28,84,.55);--raised:rgba(6,28,84,.92);--accent:#f1f6ff;--ink:#0c3a8e;
  --yellow:#ffd36b;--green:#8cf0c4;--red:#ff9c9c;--grid:225,238,255;--major:.2;--minor:.075;
@@ -816,3 +817,422 @@ body .cork-wall button:focus-visible,body #shared-dialog.studio-case-sheet :focu
 @media(max-width:700px){.setup-columns{grid-template-columns:minmax(0,1fr)}}
 .settings-connection header{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;flex-wrap:wrap}
 #shared-dialog:not(.studio-case-sheet),.chat-actions,.bp-draft,#notification-panel{box-shadow:none}
+
+/* Workspace shell */
+.shared-shell {display:grid;grid-template-columns:148px minmax(0,1fr);column-gap:var(--space-4)}
+.shared-top {grid-column:1/-1;justify-content:space-between}
+.shared-main {grid-column:2;min-width:0}
+.shared-shell:has(.studio-global-nav[hidden]) .shared-main {grid-column:1/-1}
+.studio-global-nav {align-self:start;position:sticky;top:var(--space-3);display:grid;gap:var(--space-1);margin-top:26px}
+.studio-global-nav a {min-height:var(--target);display:flex;align-items:center;padding:var(--space-2);text-decoration:none;border:1px solid transparent}
+.studio-global-nav a[aria-current],.studio-global-nav a:hover {border-color:var(--line);background:var(--panel)}
+.studio-global-nav a[aria-current] {box-shadow:inset 3px 0 var(--accent);font-weight:700}
+.final-layout {display:block}
+.studio-primary-tabs,.final-layout .shared-tabs {display:flex;flex-wrap:wrap;gap:var(--space-1);padding:0;margin:0 0 var(--space-3);position:static;max-height:none;overflow:visible;border:0;background:none}
+.studio-primary-tabs button,.final-layout .shared-tabs button,.bp-steps button {width:auto;min-height:var(--target);padding:7px 12px}
+.studio-primary-tabs button[aria-selected=true],.final-layout .shared-tabs button[aria-selected=true] {background:var(--accent);color:var(--ink);border-color:var(--accent)}
+.studio-primary-tabs button {font-weight:650;flex:1 1 auto}
+body .shared-main p {max-width:70ch}
+.studio-skeleton {display:grid;gap:var(--space-2);padding:var(--space-3);border:1px solid var(--line);background:var(--panel)}
+.studio-skeleton i {display:block;height:1rem;background:var(--line);width:75%}
+.studio-skeleton i:nth-of-type(2) {width:60%}.studio-skeleton i:last-child {width:40%}
+#command-dialog {background:var(--raised);color:var(--text);box-shadow:var(--elevation)}
+#command-dialog header {display:flex;justify-content:space-between;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2)}
+#command-results {display:grid;gap:var(--space-1);margin-top:var(--space-2)}
+#command-results button {text-align:left;min-height:var(--target);padding:var(--space-2)}
+@media(max-width:820px) {
+ .shared-shell {display:block}
+ .shared-shell:has(.studio-global-nav:not([hidden])) {padding-bottom:calc(54px + env(safe-area-inset-bottom))}
+ .studio-global-nav {position:fixed;z-index:7;inset:auto 0 0;margin:0;display:flex;gap:.1rem;overflow-x:auto;background:var(--raised);border-top:1px solid var(--line);padding:3px .4rem env(safe-area-inset-bottom)}
+ .studio-global-nav a {flex:1 0 auto;justify-content:center;padding:4px .55rem;text-align:center;font-size:.8rem}
+ .studio-global-nav a[aria-current] {box-shadow:inset 0 3px var(--accent)}
+ .studio-fab {bottom:calc(60px + env(safe-area-inset-bottom))}
+ .studio-primary-tabs button,.final-layout .shared-tabs button {font-size:.83rem;padding-inline:8px}
+ #studio-command kbd {display:none}
+}
+@media(prefers-reduced-motion:reduce) {
+ *,*::before,*::after {scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+.today-status {width: min(100%, 140px);flex:none}
+.today-status select {min-height: var(--target)}
+.shared-main .task-track {min-width: 35%;width: 130px;max-width: 100%}
+.wizard-group {padding:var(--space-3);margin-bottom:var(--space-2);border:1px solid var(--line);background:var(--panel)}
+.wizard-group summary {font-weight:700;min-height:var(--target);display:flex;align-items:center}
+.wizard-group summary::before {content:"+";margin-right:var(--space-2)}
+.wizard-group[open] summary::before {content:"−"}
+#wizard-error {color:var(--red);padding-block:var(--space-1)}
+.studio-coverage {list-style:none;padding:0;margin:0}
+.studio-coverage > li {padding-block:var(--space-2);border-top:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:var(--space-1)}
+.studio-coverage details {grid-column:1/-1}
+.planning-templates {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:var(--space-2)}
+.shared-form .planning-templates label {display:flex;align-items:flex-start;gap:var(--space-1);min-height:var(--target);padding:var(--space-2);border:1px solid var(--line)}
+.planning-templates label:has(input:checked) {background:var(--lit);border-color:var(--accent)}
+.planning-templates small {display:block}
+#plan-task-review fieldset {margin-block:var(--space-2)}
+
+/* Shared portal surfaces. Explicit Blueprint, light and custom accent choices retain their palettes. */
+:root {
+  --portal-radius: 1rem;
+  --portal-gap: clamp(1rem, 3vw, 2rem);
+  --portal-motion: 180ms ease-out;
+  --portal-drawer-motion: 220ms cubic-bezier(.2,.85,.22,1);
+  --portal-glass: linear-gradient(145deg, var(--raised), var(--panel));
+  --portal-highlight: color-mix(in srgb, var(--accent) 13%, var(--raised));
+}
+:root:not([data-blueprint]), :root[data-blueprint=dark] {
+  --page: #0a101e;
+  --text: #f0f4fc;
+  --muted: #adbbd2;
+  --panel: #141e30;
+  --raised: #1b2940;
+  --recess: #10192a;
+  --lit: #27374f;
+  --line: #35445c;
+  --edge: #48566b;
+  --green: #83e7bb;
+  --yellow: #ffcf87;
+  --red: #ffa2ab;
+  color-scheme: dark;
+}
+:root:not([data-blueprint]), :root[data-blueprint=dark]:is([data-accent=blue],:not([data-accent])) {
+  --accent: #75e4e3;
+  --ink: #08262d;
+}
+:root:not([data-blueprint]) body, :root[data-blueprint=dark] body {
+  background: radial-gradient(ellipse 57rem 37rem at 90% -10rem, #232543 0, transparent 76%),
+    radial-gradient(ellipse 35rem 29rem at -11rem 35%, #103038 0, transparent 80%), var(--page);
+}
+:root:not([data-blueprint=blueprint]) body {
+  min-height: 100dvh;
+  font: 400 1rem/1.5 var(--ui);
+}
+:root:not([data-blueprint=blueprint]) .shared-main :is(h1,h2,h3) {
+  font-family: var(--ui);
+  letter-spacing: -.025em;
+  text-transform: none;
+}
+:root:not([data-blueprint=blueprint]) .shared-main h1 {font-size: clamp(2rem,4vw,3.25rem);line-height: 1.12}
+:root:not([data-blueprint=blueprint]) .shared-main h2 {font-size: clamp(1.25rem,2.4vw,1.65rem)}
+:root:not([data-blueprint=blueprint]) .shared-main h3 {font-size: 1rem;color: var(--text)}
+.shared-shell :is(button,.button,summary,.studio-attach), dialog :is(button,summary) {
+  min-height: var(--target);
+}
+.shared-shell :is(input,select):not([type=checkbox],[type=radio],[type=file]), dialog :is(input,select):not([type=checkbox],[type=radio],[type=file]) {
+  min-height: var(--target);
+}
+:root:not([data-blueprint=blueprint]) body :is(button,.button,input,textarea,select,.studio-attach) {
+  border-radius: .65rem;
+}
+:root:not([data-blueprint=blueprint]) body :is(button,.button,a,summary) {
+  transition: color var(--portal-motion), border-color var(--portal-motion), background-color var(--portal-motion);
+}
+body :is(a,button,input,textarea,select,summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.shared-top-actions, .shared-header {flex-wrap: wrap}
+.shared-top-actions {min-width: 0}
+.shared-shell .wordmark {display: inline-flex;align-items: center;min-height: var(--target);text-decoration: none}
+:root:not([data-blueprint=blueprint]) .wordmark {
+  font: 700 1.45rem var(--ui);
+  letter-spacing: -.06em;
+}
+:root:not([data-blueprint=blueprint]) .studio-global-nav a {border-radius: .6rem;color: var(--muted)}
+:root:not([data-blueprint=blueprint]) .studio-global-nav a[aria-current] {color: var(--text);background: var(--panel)}
+:root:not([data-blueprint=blueprint]) .shared-main > .shared-header {
+  border: 0;
+  box-shadow: none;
+  background: none;
+  padding: .35rem 0 1.25rem;
+}
+:root:not([data-blueprint=blueprint]) .shared-main .auth-panel {
+  max-width: 29rem;
+  margin: clamp(1.5rem,8vh,6rem) auto;
+  padding: clamp(1.3rem,4vw,2.5rem);
+  background: var(--portal-glass);
+  border: 1px solid var(--line);
+  border-radius: 1.5rem;
+  box-shadow: inset 0 1px color-mix(in srgb,var(--text) 9%,transparent), 0 1.5rem 4rem #05091130;
+}
+.auth-panel h1 + p {margin: .6rem 0 1.3rem}
+.auth-panel .shared-form .primary {width: 100%}
+.auth-panel nav {gap: .4rem;flex-wrap: wrap;margin-bottom: 0}
+.auth-panel nav button {flex: 1 1 auto}
+.shared-form input::placeholder, .portal-shell input::placeholder, .portal-shell textarea::placeholder {
+  color: var(--muted); opacity: .9;
+}
+:root:not([data-blueprint=blueprint]) :is(.wizard-group,.bp-panel:not(.bp-draft),.shared-note,.studio-chat,.hero-timeline,.bp-lane,.bp-card) {
+  border-radius: var(--portal-radius);
+}
+:root:not([data-blueprint=blueprint]) :is(.wizard-group,.auth-panel) :is(input,textarea,select),
+:root:not([data-blueprint=blueprint]) .portal-shell :is(input,textarea,select) {
+  background-color: var(--recess);
+}
+.shared-form .wizard-group {margin-block: 0 .65rem}
+#wizard-form .draft-info {align-self: start}
+.studio-skeleton {min-height: 7rem;border-radius: var(--portal-radius)}
+.studio-skeleton i {height: .8rem;border-radius: 99px}
+@keyframes portal-arrive {from {opacity: .35;transform: translateY(3px)} to {opacity: 1;transform: none}}
+@keyframes portal-drawer {from {opacity: .5;transform: translateY(.7rem)} to {opacity: 1;transform: none}}
+#shared-dialog[open], #command-dialog[open] {animation: portal-drawer var(--portal-drawer-motion)}
+:root:not([data-blueprint=blueprint]) dialog:not(.studio-case-sheet) {border-radius: var(--portal-radius)}
+:root:not([data-blueprint=blueprint]) #shared-dialog.studio-bottom-sheet {border-radius: var(--portal-radius) var(--portal-radius) 0 0}
+
+.portal-shell {min-width: 0;max-width: 76rem;margin-inline: auto;overflow-wrap: anywhere}
+.portal-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem var(--portal-gap);
+  padding: .6rem 0 1.3rem;
+}
+.portal-head > *, .portal-content, .portal-content > *, .portal-bulletin > * {min-width: 0}
+.portal-head :is(p,small,time), .portal-post :is(small,time) {color: var(--muted)}
+.portal-tools, .portal-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+.portal-tools summary {display: flex;align-items: center;gap: .5rem}
+.portal-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: .25rem;
+  overflow-x: auto;
+  padding: .3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--portal-radius);
+  background: var(--recess);
+  scrollbar-width: thin;
+}
+.portal-tabs :is(button,a) {
+  flex: 1 0 auto;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: var(--target);
+  padding: .45rem .85rem;
+  border: 1px solid transparent;
+  border-radius: .72rem;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+.portal-tabs :is([aria-current=page],[aria-selected=true]), .portal-filter :is([aria-pressed=true],[aria-selected=true]) {
+  background: var(--portal-highlight);
+  border-color: color-mix(in srgb,var(--accent) 40%,var(--line));color: var(--accent);
+}
+.portal-content {padding-top: var(--portal-gap);animation: portal-arrive var(--portal-motion)}
+.portal-bulletin {display: grid;gap: 1rem;align-content: start}
+.portal-bulletin :is(h2,h3) {margin: 0}
+.portal-post-form {display: grid;gap: .65rem;align-content: start;background: var(--portal-glass);border: 1px solid var(--line);border-radius: var(--portal-radius);padding: clamp(.85rem,2.4vw,1.4rem)}
+.portal-post-form :is(textarea,input:not([type=checkbox],[type=radio])) {width: 100%}
+.portal-post-form textarea {min-height: 5rem}
+.portal-post-form :is(label,select) {max-width: 100%}
+.portal-pins {border-inline-start: 3px solid var(--yellow);padding: .65rem .95rem;background: color-mix(in srgb,var(--yellow) 5%,var(--panel));border-radius: 0 .7rem .7rem 0}
+.portal-pins:empty {display: none}
+.portal-post {padding: .95rem 0;border-block-end: 1px solid var(--line)}
+.portal-post p {white-space: pre-wrap;margin: .4rem 0}
+.portal-post header {display: flex;align-items: baseline;justify-content: space-between;flex-wrap: wrap;gap: .35rem 1rem}
+.portal-filter {margin-block: .35rem}
+.portal-filter button {padding-inline: .75rem}
+.portal-bulletin input[type=search] {width: min(100%,24rem)}
+:root:not([data-blueprint=blueprint]) .studio-chat {
+  overflow: clip;
+  background: var(--recess);
+  height: min(47rem,78dvh);
+  min-height: min(28rem,65dvh);
+}
+:root:not([data-blueprint=blueprint]) .studio-chat .conversation-link {border-radius: 0}
+:root:not([data-blueprint=blueprint]) .studio-chat .conversation-link[aria-current=true] {background: var(--portal-highlight);box-shadow: inset 3px 0 var(--accent)}
+:root:not([data-blueprint=blueprint]) .studio-chat .chat-bubble {border-radius: 1rem 1rem 1rem .25rem}
+:root:not([data-blueprint=blueprint]) .studio-chat .chat-bubble.mine {border-radius: 1rem 1rem .25rem 1rem;background: var(--portal-highlight);color: var(--text)}
+:root:not([data-blueprint=blueprint]) .studio-chat .chat-bubble.mine small {color: var(--muted)}
+.studio-chat .chat-bubble .button,.studio-composer .studio-attach,.studio-composer summary {min-height: var(--target);min-width: var(--target)}
+.studio-composer summary {display: grid;place-items: center}
+.studio-composer .studio-message-field textarea {min-height: var(--target);border-radius: 1rem}
+.studio-attach:focus-within {outline: 2px solid var(--accent);outline-offset: 3px}
+
+@media (max-width: 640px) {
+  .shared-top {padding-block: .5rem;gap: .35rem .7rem}
+  .shared-top-actions {gap: .25rem;max-width: 100%;flex: 0 1 auto}
+  .shared-main {padding-top: 1rem}
+  .portal-head {align-items: start;padding-bottom: .85rem}
+  .portal-tabs {gap: .12rem;padding: .2rem}
+  .portal-tabs :is(button,a) {padding-inline: .38rem;font-size: .875rem}
+  .portal-content {padding-top: 1.15rem}
+  .portal-post-form {padding: .85rem}
+  .studio-composer {gap: .25rem;padding: .45rem}
+  .shared-main :is(table,fieldset) {max-width: 100%}
+  .shared-main :is(.project-entry,.shared-row) {flex-wrap: wrap}
+  .shared-main :is(.project-entry,.shared-row) > * {min-width: 0;overflow-wrap: anywhere}
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-content,#shared-dialog[open],#command-dialog[open] {animation: none}
+}
+
+.portal-local-nav {margin-block: .6rem 0; gap: .35rem .75rem}
+.portal-local-nav a, .portal-tools details a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: .45rem;
+}
+.portal-local-nav [aria-current=page] {color: var(--accent);text-decoration: underline;text-underline-offset: .3rem}
+.portal-source-status {margin: .55rem 0;color: var(--muted);font-size: .875rem}
+.portal-citation {display: block;color: var(--muted);font-size: .875rem}
+.portal-deadline {font-size: clamp(1.25rem, 5vw, 2rem);font-weight: 650}
+.portal-content ul {overflow-wrap: anywhere}
+.portal-chat-rooms {padding: .2rem .7rem}
+.portal-chat-rooms .conversation-link {text-align: start;white-space: normal}
+#portal-chat-status:empty {display:none}
+#portal-chat-status {grid-column: 1 / -1;color:var(--muted);font-size:.875rem}
+
+/* The Shared Projects directory retains the Blueprint palette. */
+:root[data-studio-view=directory][data-blueprint=blueprint] .shared-shell {
+  max-width:none;padding-inline:clamp(12px,4vw,72px)
+}
+:root[data-studio-view=directory][data-blueprint=blueprint] .shared-main > .shared-header {
+  margin-bottom:1.75rem;padding:clamp(16px,1.65vw,30px);
+}
+:root[data-studio-view=directory][data-blueprint=blueprint] .shared-main > .shared-header h1 {
+  font:700 clamp(1.65rem,3.5vw,3.85rem)/1.2 "Space Mono",monospace;
+  letter-spacing:.12em;text-transform:uppercase;
+}
+:root[data-studio-view=directory][data-blueprint=blueprint] .project-entry {
+  padding-block:clamp(.85rem,1.7vw,1.9rem)
+}
+:root[data-studio-view=directory][data-blueprint=blueprint] .project-entry h2 {
+  font-size:clamp(1rem,1.33vw,1.42rem)
+}
+:root[data-studio-view=directory][data-blueprint=blueprint] .project-entry p {
+  font-size:clamp(.9rem,1vw,1.12rem)
+}
+@media (max-width:640px) {
+  .shared-main {padding-bottom:2rem}
+}
+.portal-citation q {display:block;margin-block:.15rem .45rem;overflow-wrap:anywhere}
+#portal-thread-draft:empty {display:none}
+#portal-thread-draft {max-height:42dvh;overflow:auto;background:var(--raised);padding:.8rem;border-top:1px solid var(--line)}
+#portal-thread-draft blockquote {margin:.35rem;color:var(--muted);overflow-wrap:anywhere}
+
+@media (min-width:821px) {
+  :root[data-studio-view=directory][data-blueprint=blueprint] body {
+    background-size:25px 25px,25px 25px,125px 125px,125px 125px
+  }
+  :root[data-studio-view=directory][data-blueprint=blueprint] .shared-shell {
+    padding-inline:clamp(16px,4vw,72px) clamp(12px,.75vw,16px)
+  }
+  :root[data-studio-view=directory][data-blueprint=blueprint] .shared-top {
+    padding-block:18px 29px;gap:clamp(1.5rem,2.5vw,2.9rem)
+  }
+  :root[data-studio-view=directory][data-blueprint=blueprint] .shared-main {padding-top:35px}
+  :root[data-studio-view=directory][data-blueprint=blueprint] .wordmark {font-size:1.95rem}
+  :root[data-studio-view=directory][data-blueprint=blueprint] :is(.shared-top,.shared-main) :is(.button,.bell-button) {
+    min-height:50px;padding-inline:.92rem;font-size:1rem
+  }
+  :root[data-studio-view=directory][data-blueprint=blueprint] .shared-main > .shared-header h1 {font-size:clamp(2.5rem,3.35vw,3.7rem)}
+  :root[data-studio-view=directory][data-blueprint=blueprint] .shared-main > .shared-header p {font-size:1.125rem}
+}
+.portal-head-controls {display:flex;align-items:center;flex-wrap:wrap;gap:.45rem .8rem;min-width:0}
+.portal-local-nav > a {
+  display:inline-flex;align-items:center;padding:.3rem .55rem;min-height:44px;
+  color:var(--text);border:1px solid var(--line);text-decoration:none;
+}
+.portal-local-nav > a[aria-current] {background:var(--accent);color:var(--ink)}
+.portal-header-deadline {font:600 .85rem/1.35 "IBM Plex Mono",monospace}
+.portal-usage {position:relative}
+.portal-usage[open] {z-index:3}
+.portal-usage .shared-actions {margin-top:.35rem}
+:root[data-studio-view=project] .portal-shell {width:100%;max-width:none}
+:root[data-studio-view=project][data-blueprint=light] {
+  --page:#eaf1fc;--text:#102859;--muted:#405982;--line:rgba(37,87,173,.26);
+  --panel:rgba(247,251,255,.68);--raised:#fafcff;--accent:#124dac;--ink:white;
+  --recess:#e2edfc;--grid:46,96,182;--minor:.065;--major:.12;
+}
+:root[data-studio-view=project][data-blueprint=light] .portal-head {
+  background:var(--panel);padding:1rem;border:1px solid var(--line);align-items:center;margin-bottom:.65rem
+}
+:root[data-studio-view=project][data-blueprint=light] .portal-head h1 {
+  font:700 clamp(1.25rem,2.4vw,2.3rem)/1.2 "Space Mono",monospace;
+  text-transform:uppercase;letter-spacing:.04em
+}
+:root[data-studio-view=project][data-blueprint=light] .portal-tabs {
+  padding:0;background:none;border:0;border-radius:0;gap:.25rem
+}
+:root[data-studio-view=project][data-blueprint=light] .portal-tabs a {
+  border:1px solid var(--line);border-radius:0;background:var(--panel);color:var(--text)
+}
+:root[data-studio-view=project][data-blueprint=light] .portal-tabs a[aria-current] {
+  background:var(--accent);border-color:var(--accent);color:var(--ink)
+}
+:root[data-studio-view=project][data-blueprint=light] .portal-local-nav {gap:.3rem}
+:root[data-studio-view=project][data-blueprint=light] :is(.hero-timeline,.portal-local-nav > a) {border-radius:0}
+:root[data-studio-view=project][data-blueprint=light] .studio-metrics {margin-bottom:1rem}
+:root[data-studio-view=project][data-blueprint=light] .portal-content {padding-top:.75rem}
+:root[data-studio-view=project][data-blueprint=light] .hero-timeline h2 {
+  font:700 1rem/1.4 "Space Mono",monospace;text-transform:uppercase;letter-spacing:.05em
+}
+@media (min-width: 1180px) {
+  :root[data-studio-view=project][data-blueprint=light] .portal-head {
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.85rem
+  }
+  :root[data-studio-view=project][data-blueprint=light] .portal-head h1 {font-size:clamp(1.3rem,1.85vw,1.75rem)}
+  .portal-head-controls {flex-wrap:nowrap}
+  .portal-header-deadline {max-width:9rem}
+}
+
+/* A quiet workspace rail, with the project switching controls kept in view. */
+:root[data-blueprint=light] {
+  --page:#f7f8fa;--raised:#fff;--panel:#fff;--recess:#f1f4f9;
+  --text:#192339;--muted:#53627a;--line:#dce2eb;--accent:#164fb2;--ink:#fff;
+}
+:root[data-blueprint=light]:not([data-studio-view=project]) body {background-image:none}
+@media (min-width:821px) {
+  .studio-global-nav {padding:.45rem;background:var(--recess);border-radius:12px}
+  .studio-global-nav a {font-size:.88rem;border-radius:8px}
+}
+.portal-head-controls .portal-usage > summary {white-space:nowrap}
+.portal-head h1 {text-wrap:balance}
+.portal-tabs a,.portal-local-nav a {white-space:nowrap}
+.portal-local-nav {overflow:visible}
+:root[data-blueprint=light] .shared-top-actions .button.subtle {background:none;border-color:transparent}
+:root[data-blueprint=light] .shared-top-actions .button.subtle:hover {background:var(--recess);color:var(--text)}
+:root[data-blueprint=light] .shared-content .shared-header h2 {font-weight:750}
+:root[data-blueprint=light] [data-area=rules] .portal-content h2 {font-size:clamp(1.6rem,3vw,2.9rem)}
+#notification-panel {max-height:min(70vh,540px);overflow:auto;border-radius:16px;box-shadow:0 12px 32px #10285926}
+.notification-group {margin:.5rem 0}
+.notification-group header {padding:.35rem .5rem}
+.notification-group li {padding:0}
+.notification-event {text-align:left;display:grid;gap:.25rem;padding:.65rem .75rem;width:100%;background:none;border:0;color:var(--text);min-height:44px}
+.notification-event:hover {background:var(--recess)}
+.notification-unread .notification-event {box-shadow:inset 3px 0 var(--accent)}
+.notification-event time {font-size:.8rem;color:var(--muted)}
+.intake-page {max-width:760px;margin-inline:auto}
+.intake-log {display:flex;flex-direction:column;gap:.75rem;min-height:10rem;max-height:min(52vh,28rem);overflow:auto;padding:.75rem}
+.intake-message {max-width:90%;align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:.7rem .9rem;white-space:pre-wrap;overflow-wrap:anywhere}
+.intake-message.member {align-self:flex-end;background:var(--recess)}
+.intake-compose {display:grid;gap:.5rem;padding:.8rem;border:1px solid var(--line);border-radius:14px;background:var(--raised)}
+.intake-compose textarea {width:100%;resize:vertical}
+.intake-attach {font-size:.875rem}
+.task-filter {display:flex;align-items:end;gap:.7rem;flex-wrap:wrap;margin:.65rem 0 1rem}
+.task-filter label {display:grid;gap:.3rem}
+.task-filter label:last-child {display:flex;align-items:center;gap:.4rem;min-height:44px}
+.bp-card[data-state=done] {border-color:#23894e;background:#e8f6ec;color:#145533}
+.bp-card[data-state=done] p {color:#145533}
+.task-priority {display:inline-block;text-transform:capitalize;color:var(--muted)}
+.bp-card[data-priority=urgent] .task-priority {color:#a92337;font-weight:700}
+.bp-card[data-priority=high] .task-priority {color:#915000;font-weight:700}
+.rules-flow {display:flex;flex-wrap:wrap;gap:.45rem;list-style:none;padding:0;margin:.7rem 0 1rem}
+.rules-flow li {padding:.6rem .75rem;border:1px solid var(--line);background:var(--panel);border-radius:.5rem}
+.rules-flow li:first-child {display:flex;align-items:center;font-weight:700}
+.official-rules {margin-block:1rem}
+.official-rules summary {font-size:1.15rem;font-weight:750}
+.official-rules li {margin-block:.5rem}
+.delivery-record {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:.75rem}
+.delivery-record dt {color:var(--muted);font-size:.9rem}
+.delivery-record dd {margin:0;font-weight:600;overflow-wrap:anywhere}

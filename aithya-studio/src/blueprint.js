@@ -1,3 +1,5 @@
+import { localThreadDraft } from "./portal/thread-evidence.js";
+import { updateTask } from "./portal/status.js";
 import {mountFinalTools} from "./final-workspace.js";
 import { mountPersonalStudio } from "./personal-studio.js";
 import {
@@ -75,7 +77,7 @@ const bar = (name, n, max, unit = "", kind = "") =>
 const input = (el, key) =>
   el.querySelector('[name="' + key + '"]')?.value.trim() || "";
 const day = 86400000;
-const dateEnd = (d) => (d ? new Date(d + "T23:59:59").getTime() : NaN);
+const dateEnd = (d) => (d ? new Date(d + "T23:59:59+05:30").getTime() : NaN);
 const bestSkill = (t) =>
   /pitch|present|demo/i.test(t)
     ? "Pitching"
@@ -101,7 +103,7 @@ export function allocate(tasks, members, skills, availability, existing = []) {
     const skill = t.skill || bestSkill(t.title);
     const score = (m) => {
       const level = Math.max(
-        0,
+        m.preliminary_skills?.some(name => name.toLowerCase() === skill.toLowerCase()) ? 1 : 0,
         ...skills
           .filter(
             (s) =>
@@ -213,7 +215,8 @@ export function mountBlueprint(ctx) {
   async function aiJSON(task, inputData, fallback) {
     if (permitted)
       try {
-        const response = await fetch("/api/assist", {
+        const response = await fetch("/api/ai/" + encodeURIComponent(task), {
+          signal: AbortSignal.timeout(50000),
           method: "POST",
           headers: {
             authorization: "Bearer " + session.access_token,
@@ -328,7 +331,7 @@ export function mountBlueprint(ctx) {
       });
   }
   const post = (kind, body, extra = {}) =>
-    write("project_messages", { project_id: p.id, kind, body, ...extra });
+    write("project_messages", { project_id: p.id, kind, body, ...(activeTask ? {thread_task:activeTask} : {}), ...extra });
   const milestones = d.milestones || [];
   function charts() {
     const counts = stages.map(
@@ -427,7 +430,7 @@ export function mountBlueprint(ctx) {
   function clock() {
     const end = dateEnd(p.submission_deadline),
       start = new Date(
-        (p.start_date || p.created_at.slice(0, 10)) + "T00:00:00",
+        (p.start_date || p.created_at.slice(0, 10)) + "T00:00:00+05:30",
       ).getTime();
     const elapsed =
       Number.isFinite(end) && end > start
@@ -701,6 +704,9 @@ export function mountBlueprint(ctx) {
         fld("idea", "Task idea") +
         btn("suggest", "Suggest subtasks"),
     );
+    const priorities = ["urgent","high","normal","low"];
+    const ordered = [...d.tasks].sort((a,b) => priorities.indexOf(a.priority || "normal") - priorities.indexOf(b.priority || "normal") ||
+      (a.due_date || "9999").localeCompare(b.due_date || "9999"));
     const cards = stages
       .map(
         (stage, i) =>
@@ -709,18 +715,20 @@ export function mountBlueprint(ctx) {
           '"><h3>' +
           labels[i] +
           "</h3>" +
-          d.tasks
+          ordered
             .filter((t) => t.status === stage)
             .map((t) => {
               const blocker = d.tasks.find(
                 (b) => b.id === t.blocked_by && b.status !== "done",
               );
               return (
-                '<article class="bp-card" draggable="true" data-id="' +
-                t.id +
-                '"><b>' +
+                '<article class="bp-card" draggable="true" data-id="' + esc(t.id) +
+                '" data-owner="' + esc(t.owner_id || "") + '" data-priority="' + esc(t.priority || "normal") +
+                '" data-search="' + esc([t.title,t.skill,name(t.owner_id)].filter(Boolean).join(" ").toLowerCase()) +
+                '" data-state="' + esc(t.status) + '"><b>' +
                 esc(t.title) +
-                "</b><p>" +
+                '</b><p><span class="task-priority">' + esc(t.priority || "normal") + '</span>' +
+                (t.due_date ? " · Due " + esc(t.due_date) : "") + "</p><p>" +
                 esc(name(t.owner_id)) +
                 " · " +
                 esc(t.skill || "Skill unspecified") +
@@ -732,13 +740,14 @@ export function mountBlueprint(ctx) {
                     esc(blocker.title) +
                     "</p>"
                   : "") +
+                '<details><summary>Task options</summary><div class="shared-actions">' +
                 (i ? btn("prev-" + t.id, "Move to " + labels[i - 1]) : "") +
                 (i < 3 ? btn("next-" + t.id, "Move to " + labels[i + 1]) : "") +
-                btn("edit-" + t.id, "Edit task") +
+                btn("edit-" + t.id, "Edit task") + btn("mentor-" + t.id,"Ask mentor") +
                 btn("split-" + t.id, "Reduce scope") +
                 btn("learn-" + t.id, "Learn this task") +
                 (leader ? btn("delete-" + t.id, "Delete task") : "") +
-                "</article>"
+                "</div></details></article>"
               );
             })
             .join("") +
@@ -751,16 +760,24 @@ export function mountBlueprint(ctx) {
       .querySelector("header")
       .insertAdjacentHTML(
         "afterend",
-        toolbar + '<div class="bp-board">' + cards + "</div>",
+        '<div class="task-filter" aria-label="Filter tasks"><label>Search tasks<input id="board-query" type="search"></label>' +
+        '<label>Priority<select id="board-priority"><option value="">All</option>' +
+        priorities.map(priority=>'<option>'+esc(priority)+'</option>').join("") + '</select></label>' +
+        '<label><input type="checkbox" id="board-mine"> Assigned to me</label></div>' +
+        '<div class="bp-board">' + cards + '</div><details><summary>Work planning tools</summary>' + toolbar + '</details>',
       );
+    const filter=()=>{
+      const query=root.querySelector("#board-query").value.trim().toLowerCase();
+      const priority=root.querySelector("#board-priority").value;
+      const mine=root.querySelector("#board-mine").checked;
+      for (const card of root.querySelectorAll(".bp-card[data-id]"))
+        card.hidden=Boolean((query&&!card.dataset.search.includes(query)) ||
+          (priority&&card.dataset.priority!==priority) || (mine&&card.dataset.owner!==uid));
+    };
+    for (const control of root.querySelectorAll(".task-filter input,.task-filter select"))
+      control.addEventListener("input",filter);
     const move = async (id, status) => {
-      await result(
-        db
-          .from("project_tasks")
-          .update({ status })
-          .eq("project_id", p.id)
-          .eq("id", id),
-      );
+      await updateTask(db, d.tasks.find(task => task.id === id), { status });
       await refresh();
     };
     root
@@ -785,6 +802,7 @@ export function mountBlueprint(ctx) {
     });
     for (const t of d.tasks) {
       const i = stages.indexOf(t.status);
+      bind("mentor-" + t.id, () => ctx.openTaskMentor?.(t.id));
       bind("prev-" + t.id, () => move(t.id, stages[i - 1]));
       bind("next-" + t.id, () => move(t.id, stages[i + 1]));
       bind("edit-" + t.id, () =>
@@ -950,6 +968,8 @@ export function mountBlueprint(ctx) {
       ),
     );
   }
+  let activeTask = null;
+  const pendingMessages = new Map();
   let timelineProposals=[];
   let messages = [],
     files = [],
@@ -957,14 +977,13 @@ export function mountBlueprint(ctx) {
     loadVersion = 0;
   async function readChat() {
     const version = ++loadVersion;
-    const rows = await result(
-      db
-        .from("project_messages")
-        .select("*")
-        .eq("project_id", p.id)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
+    let query = db.from("project_messages").select("*").eq("project_id", p.id)
+      .order("created_at", { ascending: false }).limit(100);
+    if (d.portalReady) {
+      query = query.is("bulletin_type", null);
+      query = activeTask ? query.eq("thread_task", activeTask) : query.is("thread_task", null);
+    }
+    const rows = await result(query);
     const ids = rows.map((m) => m.id);
     const [attachments, ballots, proposals] = await Promise.all([
       ids.length
@@ -1047,7 +1066,7 @@ export function mountBlueprint(ctx) {
             esc(stamp===new Date().toLocaleDateString()?"Today":date.toLocaleDateString(undefined,{month:"short",day:"numeric"}))+'</time>':"";
           dayLabel=stamp;
           return (
-            divider+'<article class="chat-bubble ' +
+            divider+'<article id="chat-message-' + esc(m.id) + '" class="chat-bubble ' +
             (m.author_id === uid ? "mine" : "theirs") +
             '"><small>' +
             esc(m.author_id === uid ? "You" : name(m.author_id)) +
@@ -1143,25 +1162,25 @@ export function mountBlueprint(ctx) {
         setTimeout(() => URL.revokeObjectURL(url), 120000);
       });
   }
-  const recent = () =>
-    messages
-      .slice(-40)
-      .map((m) => name(m.author_id) + ": " + m.body)
-      .join("\n");
   const teamNames = () => team.map((m) => m.full_name).join(", ");
   function chat() {
     add(
       '<section class="studio-chat" aria-label="Project chats"><div class="studio-chat-list"><header><h2>Chats</h2></header>' +
         '<button type="button" class="conversation-link" data-bp="team-thread" aria-current="true"><span class="chat-avatar" aria-hidden="true">#</span><span><strong>' +
         esc(p.name) +
-        " team</strong><small>Project channel</small></span></button>" +
+        " team</strong><small>General</small></span></button>" +
+        (d.portalReady ? '<details class="portal-chat-rooms"><summary>Task threads</summary>' +
+          d.tasks.map(task => '<button type="button" class="conversation-link" data-bp="thread-' +
+            esc(task.id) + '">' + esc(task.title) + '</button>').join("") +
+          (d.tasks.length ? '' : '<p>Add a task to start its thread.</p>') + '</details>' : '') +
         '<div id="studio-private-list"></div></div><div class="studio-chat-thread" id="studio-team-thread">' +
         "<header><div><h2>" +
-        esc(p.name) +
-        " team</h2><p>" +
+        '<span id="portal-thread-name">General</span>' +
+        "</h2><p>" +
         team.length +
         ' members</p></div><button type="button" class="mobile-chat-back button subtle" data-bp="chat-back">All chats</button></header>' +
         '<div id="bp-messages" class="studio-chat-log" role="log" aria-live="polite"></div>' +
+        '<section id="portal-thread-draft" aria-live="polite"></section>' +
         '<div class="studio-composer"><details><summary aria-label="Message actions">＋</summary><div class="chat-actions">' +
         btn("poll", "Create poll") +
         btn("propose", "Propose task") +
@@ -1178,7 +1197,9 @@ export function mountBlueprint(ctx) {
         '<details><summary>Shared files</summary><div id="bp-attachments"></div></details>' +
         "<details><summary>Conversation tools</summary>" +
         btn("thread", "Summarize thread") +
-        btn("actions", "Find action items") +
+        btn("actions", "Turn this into tasks") + btn("decisions", "Extract decisions") +
+        '<label><input type="checkbox" id="portal-thread-ai">Use Gemini for this draft</label>' +
+        '<p class="shared-muted">Gemini receives up to 14 recent messages from this room. File contents and private chats stay here.</p>' +
         btn("merge", "Merge stand-ups") +
         fld("notes", "Shared meeting notes", "textarea") +
         btn("summarize", "Summarize notes") +
@@ -1193,7 +1214,7 @@ export function mountBlueprint(ctx) {
         "</details></div></details>" +
         '<label class="studio-attach" title="Attach a file"><span aria-hidden="true">＋</span><span class="studio-sr">Attach a file up to 10 MB</span><input type="file" name="attach"></label>' +
         '<label class="studio-message-field"><span class="studio-sr">Message</span><textarea name="chat-body" rows="1" placeholder="Write a message" maxlength="6000"></textarea></label>' +
-        btn("send", "Send") +
+        btn("send", "Send") + '<span id="portal-chat-status" role="status"></span>' +
         '<output id="studio-attachment-name"></output></div><div id="bp-file-preview" aria-live="polite"></div></div><div id="v3-conversation" class="studio-chat-thread" hidden></div></section>',
     );
     const frame = root.querySelector(".studio-chat");
@@ -1206,7 +1227,19 @@ export function mountBlueprint(ctx) {
         .setAttribute("aria-current", "true");
       root.dispatchEvent(new Event("team-thread-open"));
     };
-    bind("team-thread", activateTeam);
+    const openThread = async (task, label, control) => {
+      activeTask = task;
+      messages = [];
+      root.querySelector("#portal-thread-draft")?.replaceChildren();
+      activateTeam();
+      root.querySelector("#portal-thread-name").textContent = label;
+      for (const link of root.querySelectorAll('.conversation-link[aria-current="true"]')) link.removeAttribute("aria-current");
+      control.setAttribute("aria-current", "true");
+      await readChat();
+    };
+    bind("team-thread", control => openThread(null, "General", control));
+    if (d.portalReady) for (const task of d.tasks)
+      bind("thread-" + task.id, control => openThread(task.id, task.title, control));
     bind("chat-back", () => frame.classList.remove("show-thread"));
     root.querySelector('[name="attach"]').onchange = (e) => {
       root.querySelector("#studio-attachment-name").textContent =
@@ -1279,39 +1312,64 @@ export function mountBlueprint(ctx) {
       notify("Digest schedule saved.");
     });
     bind("send", async () => {
-      const file = root.querySelector("[name=attach]").files[0],
-        body = input(root, "chat-body") || file?.name;
+      const inputField = root.querySelector("[name=chat-body]");
+      const attachment = root.querySelector("[name=attach]");
+      const feedback = root.querySelector("#portal-chat-status");
+      const file = attachment.files[0];
+      const body = input(root, "chat-body") || file?.name;
       if (!body) throw Error("Write a message or choose a file.");
       if (file && (!file.size || file.size > 10 * 1024 * 1024))
         throw Error("Choose a file between one byte and 10 MB.");
-      const msg = await result(
-        db
-          .from("project_messages")
-          .insert({ project_id: p.id, kind: input(root, "kind"), body })
-          .select("id")
-          .single(),
-      );
-      root.querySelector("[name=chat-body]").value = "";
-      if (file) {
-        const path = p.id + "/" + msg.id + "/" + crypto.randomUUID();
-        await result(db.storage.from("team-chat").upload(path, file));
-        try {
-          await write("message_files", {
-            message_id: msg.id,
-            project_id: p.id,
-            storage_path: path,
-            name: file.name,
-            mime: file.type,
-            size: file.size,
-          });
-        } catch (e) {
-          await db.storage.from("team-chat").remove([path]);
-          throw e;
-        }
-        root.querySelector("[name=attach]").value = "";
-        root.querySelector("#studio-attachment-name").textContent = "";
+      if (!navigator.onLine) {
+        feedback.textContent = "Offline. Your draft is still here. Retry when connected.";
+        return;
       }
-      await readChat();
+      const room = activeTask || "general";
+      const kind = input(root, "kind");
+      let pending = pendingMessages.get(room);
+      if (!pending || pending.body !== body || pending.file !== file || pending.kind !== kind) {
+        pending = {id:crypto.randomUUID(), body, file, kind, sent:false};
+        pendingMessages.set(room, pending);
+      }
+      feedback.textContent = "Sending message…";
+      try {
+        if (!pending.sent) {
+          const payload = {project_id:p.id, kind, body,
+            ...(d.portalReady ? {id:pending.id, thread_task:activeTask} : {})};
+          const inserted = await db.from("project_messages").insert(payload).select("id").single();
+          if (d.portalReady && inserted.error?.code === "23505") {
+            await result(db.from("project_messages").select("id").eq("id",pending.id).eq("project_id",p.id).eq("author_id",uid).single());
+          } else {
+            if (inserted.error) throw inserted.error;
+            pending.id = inserted.data.id;
+          }
+          pending.sent = true;
+        }
+        if (file) {
+          feedback.textContent = "Uploading attachment…";
+          const path = p.id + "/" + pending.id + "/" + crypto.randomUUID();
+          await result(db.storage.from("team-chat").upload(path, file));
+          try {
+            await write("message_files", {
+              message_id:pending.id, project_id:p.id, storage_path:path,
+              name:file.name, mime:file.type, size:file.size,
+            });
+          } catch (error) {
+            await db.storage.from("team-chat").remove([path]);
+            throw error;
+          }
+        }
+        pendingMessages.delete(room);
+        if ((activeTask || "general") === room && inputField.value.trim() === (body === file?.name ? "" : body)) {
+          inputField.value = "";
+          attachment.value = "";
+          root.querySelector("#studio-attachment-name").textContent = "";
+        }
+        feedback.textContent = "Message sent.";
+        void readChat().catch(() => { feedback.textContent = "Sent. Refresh to load the conversation."; });
+      } catch (error) {
+        feedback.textContent = (pending.sent ? "Message sent. Retry the attachment. " : "Draft kept. Retry sending. ") + error.message;
+      }
     });
     bind("voice", () => {
       const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1385,38 +1443,73 @@ export function mountBlueprint(ctx) {
             .join("\n")
             .slice(0, 6000),
       );
-    assisted(
-      "thread",
-      "chat.summary",
-      () => ({ messages: recent() }),
-      () => ({
-        summary:
-          messages.length +
-          " messages. Latest: " +
-          (messages.at(-1)?.body || "No posts yet"),
-        decisions: messages
-          .filter((m) => m.kind === "decision")
-          .slice(-5)
-          .map((m) => m.body),
-        open: messages
-          .filter((m) => m.body.includes("?"))
-          .slice(-5)
-          .map((m) => m.body),
-      }),
-      postDraft,
-      "Post summary",
-    );
-    assisted(
-      "actions",
-      "chat.actions",
-      () => ({ messages: recent(), team: teamNames() }),
-      () => ({ actions: actionFallback(recent()) }),
-      (x) =>
-        x.actions.length
-          ? write("project_tasks", taskRows(x.actions))
-          : notify("No actions found."),
-      "Add actions to board",
-    );
+    const threadProposal = (key, task, title) => bind(key, async () => {
+      const panel = root.querySelector("#portal-thread-draft");
+      const room = activeTask;
+      const sourceMessages = [...messages];
+      const useGemini = root.querySelector("#portal-thread-ai").checked;
+      root.querySelector(".studio-composer > details").open = false;
+      let proposal = localThreadDraft(task, sourceMessages);
+      let generated = false;
+      panel.textContent = "Preparing draft…";
+      if (useGemini && permitted && d.portalReady) {
+        try {
+          const response = await fetch("/api/ai/" + task, {
+            signal:AbortSignal.timeout(75000), method:"POST",
+            headers:{authorization:"Bearer " + session.access_token,"content-type":"application/json"},
+            body:JSON.stringify({projectId:p.id,input:{approved:true,threadTask:room}}),
+          });
+          if (!response.ok) throw Error("Draft unavailable");
+          proposal = cleanResult(assistContracts[task][2],(await response.json()).data);
+          generated = true;
+        } catch {
+          notify("Gemini draft unavailable. Review the quoted messages.");
+        }
+      }
+      if (!panel.isConnected || room !== activeTask) return;
+      if (!proposal.items.length) {
+        panel.textContent = "No supported items in this thread.";
+        return;
+      }
+      const heading = document.createElement("h3");
+      heading.textContent = title + (generated ? " · Gemini proposal" : " · Quoted draft");
+      const form = document.createElement("form");
+      form.className = "shared-form";
+      form.innerHTML = proposal.items.map(item => {
+        const source = sourceMessages.find(message => message.id === item.source);
+        return '<fieldset><label>Draft item<textarea required maxlength="300">' + esc(item.text) +
+          '</textarea></label><small>' + esc(item.why) + ' · ' + esc(item.confidence) + ' confidence</small>' +
+          (source ? '<blockquote>' + esc(source.body.slice(0,240)) + '</blockquote>' : '') + '</fieldset>';
+      }).join("") + '<div class="shared-actions"><button class="button primary">Accept</button>' +
+        '<button type="button" class="button subtle" data-dismiss>Dismiss</button></div><p role="status"></p>';
+      panel.replaceChildren(heading,form);
+      form.querySelector("[data-dismiss]").onclick = () => panel.replaceChildren();
+      form.onsubmit = async event => {
+        event.preventDefault();
+        const rows = [...form.querySelectorAll("textarea")].map(input => input.value.trim()).filter(Boolean);
+        const status = form.querySelector('[role="status"]');
+        if (!rows.length) { status.textContent = "Enter at least one item."; return; }
+        event.submitter.disabled = true;
+        status.textContent = "Saving approved items…";
+        try {
+          if (task === "chat.actions") {
+            await write("project_tasks", rows.map(text=>({project_id:p.id,title:text.slice(0,200)})));
+          } else {
+            await post(task === "chat.decisions" ? "decision" : generated ? "ai" : "text",rows.join("\n"));
+            await readChat();
+          }
+          panel.textContent = "Approved and saved.";
+        } catch (error) {
+          status.textContent = error.message;
+          event.submitter.disabled = false;
+        }
+      };
+      panel.scrollIntoView({block:"nearest"});
+      form.querySelector("textarea")?.focus({preventScroll:true});
+    });
+    threadProposal("thread", "chat.summary", "Thread summary");
+    threadProposal("actions", "chat.actions", "Proposed tasks");
+    threadProposal("decisions", "chat.decisions", "Proposed decisions");
     assisted(
       "summarize",
       "notes.summary",
@@ -1700,15 +1793,55 @@ export function mountBlueprint(ctx) {
   }
   function mentor(){
     add(panel("Project mentor",'<div id="mentor-conversation" role="log" aria-live="polite"><p>Ask about your project brief, tasks, or submission rules.</p></div>'+
-      fld("question","Question","textarea")+btn("ask","Ask mentor")));
+      fld("question","Question","textarea")+btn("ask","Ask mentor") + btn("mentor-task-action","Propose task change")));
     const log=root.querySelector("#mentor-conversation");
+    const selected = ctx.mentorTask && d.tasks.find(task => task.id === ctx.mentorTask);
+    if (selected) {
+      root.querySelector('[name="question"]').value="Help me with task: " + selected.title;
+    }
+    bind("mentor-task-action",async()=>{
+      const question=input(root,"question");
+      if(!question)throw Error("Describe the task change to review.");
+      const response=await aiJSON("task.mentor",{question,selectedTask:selected?.id},()=>({
+        action:"none",reason:"Gemini is unavailable. You can still change tasks from the Work board.",
+      }));
+      const draft=response.data;
+      if(!root.isConnected)return;
+      if(draft.action==="none") {notify(draft.reason);return;}
+      const task=d.tasks.find(item=>item.id===draft.taskId);
+      if(draft.action!=="create"&&!task) throw Error("Gemini could not identify an existing task.");
+      const buttonText=draft.action==="delete"?"Delete task":"Approve task change";
+      if (draft.action==="delete"&&!leader) throw Error("The project leader must approve deleting a task.");
+      const priorityOptions=[["urgent","Urgent"],["high","High"],["normal","Normal"],["low","Low"]];
+      const supportsPriority="studio_intake_applied" in p;
+      modal(draft.action==="delete"?"Review task deletion":"Review task change",
+        "<p>"+esc(draft.reason)+"</p>"+
+        (draft.action==="delete" ? '<p>'+esc(task.title)+'</p><label><input type="checkbox" name="confirm"> Delete this task</label>' :
+          fld("title","Title","text",(draft.title||task?.title||"").slice(0,200)) +
+          sel("status","Status",stages.map((phase,index)=>[phase,labels[index]]),draft.status || task?.status || "open") +
+          (supportsPriority ? sel("priority","Priority",priorityOptions,draft.priority || task?.priority || "normal") : "")),
+        async form=>{
+          if(draft.action==="delete"){
+            if(!form.has("confirm"))throw Error("Confirm deletion before proceeding.");
+            let query=db.from("project_tasks").delete().eq("project_id",p.id).eq("id",task.id);
+            if(task.portal_version!=null)query=query.eq("portal_version",task.portal_version);
+            if(!await result(query.select("id").maybeSingle()))throw Error("The task changed. Refresh and try again.");
+            return;
+          }
+          const title=String(form.get("title")||"").trim();
+          if(!title||title.length>200)throw Error("Use a task title with up to 200 characters.");
+          const values={title,status:form.get("status"),...(supportsPriority?{priority:form.get("priority")}:{})};
+          if(task)await updateTask(db,task,values);
+          else await write("project_tasks",{...values,project_id:p.id});
+        },()=>{notify(buttonText==="Delete task"?"Task deleted.":"Task change saved.");return refresh();},buttonText);
+    });
     if(d.personalReady)result(db.from("studio_mentor_history").select("question,answer").eq("project_id",p.id).order("created_at",{ascending:false}).limit(10))
       .then(rows=>{if(log.isConnected)rows.reverse().forEach(r=>log.insertAdjacentHTML("beforeend",'<p class="chat-bubble mine">'+esc(r.question)+'</p><p class="chat-bubble theirs">'+esc(r.answer)+'</p>'))}).catch(()=>{});
     bind("ask",async()=>{
       const question=input(root,"question");
       if(!question)throw Error("Enter a question.");
       const basic=/risk|deadline/i.test(question)?metric.risk+" · "+metric.left+" estimated hours remain.":/rule|require/i.test(question)?knownRules.slice(0,3).join(" · "):/task|block/i.test(question)?d.tasks.slice(0,4).map(t=>t.title+" ("+t.status.replaceAll("_"," ")+")").join(" · "):"";
-      const answer=await aiJSON("mentor",{question},()=>({text:basic||"I don’t have enough project evidence to answer that yet."}));
+      const answer=await aiJSON("mentor",{question,selectedTask:selected?.id},()=>({text:basic||"I don’t have enough project evidence to answer that yet."}));
       if(!log.isConnected)return;
       const key="save-reply-"+crypto.randomUUID();
       log.insertAdjacentHTML("beforeend",'<p class="chat-bubble mine">'+esc(question)+'</p><div class="chat-bubble theirs"><small>'+(answer.ai?"Gemini":"Basic")+'</small><p>'+esc(answer.data.text)+'</p>'+(d.personalReady?btn(key,"Save reply"):"")+'</div>');
@@ -1749,16 +1882,11 @@ export function mountBlueprint(ctx) {
     (event) => {
       if (!root.isConnected) return;
       if (tab === "Chat") readChat().catch((e) => notify(e.message));
-      else if (event.new.author_id !== uid) {
-        const b = document.getElementById("tab-Chat");
-        if (b) {
-          b.dataset.count = String(
-            Number(sessionStorage.getItem("chat-count-" + uid + p.id) || 0) + 1,
-          );
-          sessionStorage.setItem("chat-count-" + uid + p.id, b.dataset.count);
-          b.innerHTML =
-            "<span>05</span>Team chat (" + Number(b.dataset.count) + ")";
-        }
+      else if (event.new.author_id !== uid && !(tab === "Bulletin" && event.new.bulletin_type)) {
+        const key = "chat-count-" + uid + p.id;
+        const count = Number(sessionStorage.getItem(key) || 0) + 1;
+        sessionStorage.setItem(key, String(count));
+        ctx.onUnread?.(count);
       }
     },
   );
@@ -1776,12 +1904,6 @@ export function mountBlueprint(ctx) {
         },
         () => readChat().catch((e) => notify(e.message)),
       );
-  }
-  if (tab === "Chat") sessionStorage.removeItem("chat-count-" + uid + p.id);
-  else {
-    const count = sessionStorage.getItem("chat-count-" + uid + p.id);
-    const link = document.getElementById("tab-Chat");
-    if (count && link) link.textContent = "Chats (" + Number(count) + ")";
   }
   channel.subscribe();
   return () => {

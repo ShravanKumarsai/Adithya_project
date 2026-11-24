@@ -1,3 +1,11 @@
+import { isThreadAction, verifyThreadDraft } from "./src/portal/thread-evidence.js";
+import { redactAIContext } from "./server/ai-context.mjs";
+import { json, timedFetch } from "./server/http.mjs";
+import { dailyLimits, quotaReservations } from "./server/quota.mjs";
+import { supabasePublishableKey, supabaseUrl } from "./src/lib/supabase-config.js";
+import { assistContracts, cleanResult } from "./src/assist-contract.js";
+import { clip, strings, defaultGeminiModel, permittedGeminiModel, projectGeminiKey, revealIntegration, uuidPattern } from "./planning-api.mjs";
+
 const platformAssist = new Set([
   "problem.summary",
   "rules.extract",
@@ -6,7 +14,6 @@ const platformAssist = new Set([
   "skills.normalize",
   "project.intake",
 ]);
-const previewLimit = 50;
 
 async function getAssistRows(authorization, table, filters) {
   const query = new URLSearchParams(filters);
@@ -82,7 +89,9 @@ async function assembleAssistContext(
       task === "item.brief" ||
       task === "skills.normalize";
     const tasksNeeded = needed.includes("tasks") || needed.includes("metrics");
-    const [members, skills, tasks, availability] = await Promise.all([
+    const taskColumns = task === "task.mentor" ? "id,title,status,priority,due_date" : "id,title,status,skill,estimated_hours,due_date,blocked_by";
+    const focused = ["task.mentor","mentor"].includes(task) && typeof input.selectedTask === "string" && uuidPattern.test(input.selectedTask);
+    const [members, skills, tasks, availability, selected] = await Promise.all([
       needed.includes("team")
         ? rows("project_members", "full_name", {
             status: "eq.accepted",
@@ -98,7 +107,7 @@ async function assembleAssistContext(
       tasksNeeded
         ? rows(
             "project_tasks",
-            "title,status,skill,estimated_hours,due_date,blocked_by",
+            taskColumns,
             {
               ...(personal && task !== "role.analysis"
                 ? { owner_id: "eq." + user.id }
@@ -115,11 +124,13 @@ async function assembleAssistContext(
             personal ? { user_id: "eq." + user.id } : {},
           )
         : [],
+      focused ? rows("project_tasks",taskColumns,{id:"eq."+input.selectedTask,limit:"1"}) : [],
     ]);
     if (needed.includes("team"))
       result.team = members.map((m) => m.full_name).join(", ");
     if (needed.includes("skills")) result.skills = JSON.stringify(skills);
-    if (needed.includes("tasks")) result.tasks = JSON.stringify(tasks);
+    if (needed.includes("tasks")) result.tasks = JSON.stringify(selected.length ?
+      [{...selected[0],selected:true},...tasks.filter(item=>item.id!==selected[0].id)] : tasks);
     if (needed.includes("metrics"))
       result.metrics = JSON.stringify({
         open: tasks.filter((t) => t.status !== "done").length,
@@ -206,14 +217,15 @@ async function assembleAssistContext(
     );
   }
   if (needed.includes("messages")) {
-    const messages = await rows("project_messages", "body", {
-      limit: "40",
+    const scopedThread = isThreadAction(task);
+    const messages = await rows("project_messages", scopedThread ? "id,body" : "body", {
+      limit: scopedThread ? "14" : "40",
       order: "created_at.desc",
-      ...(task === "standup" ? { kind: "eq.standup" } : {}),
+      ...(scopedThread ? {bulletin_type:"is.null", thread_task:input.threadTask ? "eq." + input.threadTask : "is.null"} : {}),
+      ...(task === "standup" ? { kind:"eq.standup" } : {}),
     });
-    result.messages = messages
-      .reverse()
-      .map((m) => m.body)
+    result.messages = messages.reverse()
+      .map(message => scopedThread ? message.id + " · " + clip(message.body,320).replace(/\s+/g, " ") : message.body)
       .join("\n");
   }
   return Object.fromEntries(
@@ -229,7 +241,7 @@ async function assembleAssistContext(
   );
 }
 
-async function studioAssist(request, env, url, user) {
+export async function studioAssist(request, env, url, user, capability) {
   if (request.method !== "POST" || request.headers.get("origin") !== url.origin)
     return json({ error: "Open assistance from your project." }, 403);
   const authorization = request.headers.get("authorization");
@@ -239,6 +251,7 @@ async function studioAssist(request, env, url, user) {
     task,
     model,
     called = false;
+  const quota = quotaReservations(env.DB);
   const log = async (ok, usage) => {
     try {
       await env.DB.prepare(
@@ -273,7 +286,7 @@ async function studioAssist(request, env, url, user) {
       typeof payload.projectId === "string"
         ? payload.projectId.toLowerCase()
         : "";
-    task = payload.task === "role.analyze" ? "role.analysis" : payload.task;
+    task = capability || (payload.task === "role.analyze" ? "role.analysis" : payload.task);
     if (task === "direct.summary")
       return json(
         { error: "Private conversations stay out of AI requests." },
@@ -287,6 +300,12 @@ async function studioAssist(request, env, url, user) {
       typeof input !== "object"
     )
       return json({ error: "Choose a project action." }, 400);
+    if (isThreadAction(task)) {
+      if (input.approved !== true || (input.threadTask != null && (typeof input.threadTask !== "string" || !uuidPattern.test(input.threadTask))))
+        return json({ error:"Review what will be sent from the selected team thread." }, 400);
+      if (env.ENABLE_GROUNDED_THREAD_AI !== "true")
+        return json({ error:"Gemini thread drafts are awaiting evaluation. Use the quoted draft." }, 503);
+    }
     const [[project], [policy]] = await Promise.all([
       getAssistRows(authorization, "projects", {
         id: "eq." + id,
@@ -330,13 +349,7 @@ async function studioAssist(request, env, url, user) {
       const stored = await projectGeminiKey(env, id);
       if (!stored)
         return json({ error: "Add the team Gemini key in Settings." }, 422);
-      key = new TextDecoder().decode(
-        await crypto.subtle.decrypt(
-          projectKeyCipher(id, decodeBytes(stored.nonce)),
-          await encryptionKey(env),
-          decodeBytes(stored.ciphertext),
-        ),
-      );
+      key = await revealIntegration(env, id, "gemini", stored);
     }
     if (!key)
       return json({ error: "The setup Gemini key is unavailable." }, 422);
@@ -348,23 +361,14 @@ async function studioAssist(request, env, url, user) {
         user,
         authorization,
       );
-    const day = new Date().toISOString().slice(0, 10);
-    const charge = (bucket, limit) =>
-      env.DB.prepare(
-        "INSERT INTO planning_rate(account_id,day,attempts) VALUES(?,?,1) ON CONFLICT(account_id,day) DO UPDATE SET attempts=attempts+1 WHERE attempts<?",
-      )
-        .bind(bucket, day, limit)
-        .run();
-    const personal = await charge("assist-user:" + user.id, 15);
-    if (!personal.meta.changes)
-      return json({ error: "Your daily assistance quota is used." }, 429);
-    const quota = await charge("assist-project:" + id, previewLimit);
-    if (!quota.meta.changes)
-      return json({ error: "This project reached its daily AI quota." }, 429);
-    if (initialization && !(await charge("assist-platform", 120)).meta.changes)
-      return json({ error: "Setup assistance is at capacity today." }, 429);
+    if (!await quota.reserve("assist-user:" + user.id, dailyLimits.assistUser))
+      return json(quota.exceeded("Your daily assistance quota is used.", dailyLimits.assistUser), 429);
+    if (!await quota.reserve("assist-project:" + id, dailyLimits.assistProject))
+      return json(quota.exceeded("This project reached its daily AI quota.", dailyLimits.assistProject), 429);
+    if (initialization && !await quota.reserve("assist-platform", dailyLimits.assistSite))
+      return json(quota.exceeded("Setup assistance is at capacity today.", dailyLimits.assistSite), 429);
     called = true;
-    const response = await timedFetch(
+    const generate = () => timedFetch(
       "https://generativelanguage.googleapis.com/v1beta/models/" +
         encodeURIComponent(model) +
         ":generateContent",
@@ -380,7 +384,7 @@ async function studioAssist(request, env, url, user) {
               { text: instruction },
             ],
           },
-          contents: [{ parts: [{ text: JSON.stringify(scoped) }] }],
+          contents: [{ parts: [{ text: JSON.stringify(redactAIContext(scoped)) }] }],
           generationConfig: {
             responseMimeType: "application/json",
             responseJsonSchema: schema,
@@ -388,23 +392,29 @@ async function studioAssist(request, env, url, user) {
           },
         }),
       },
-      45000,
+      32000,
     );
-    if (!response.ok) throw Error("Provider failed");
-    const result = await response.json(),
-      candidate = result.candidates?.[0];
-    if (candidate?.finishReason !== "STOP") throw Error("Incomplete draft");
-    const data = cleanResult(
-      schema,
-      JSON.parse(
-        candidate.content.parts
-          .filter((p) => !p.thought)
-          .map((p) => p.text)
-          .join(""),
-      ),
-    );
-    await log(true, result.usageMetadata);
-    return json({ data, ai: true });
+    let clean, provider;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await generate();
+      if (!response.ok) throw Error("Provider failed");
+      provider = await response.json();
+      try {
+        const candidate = provider.candidates?.[0];
+        if (candidate?.finishReason !== "STOP") throw Error("Incomplete draft");
+        clean = cleanResult(schema, JSON.parse(candidate.content.parts
+          .filter(part => !part.thought).map(part => part.text).join("")));
+        if (isThreadAction(task)) clean = verifyThreadDraft(
+          clean, scoped.messages.split("\n").map(line => line.split(" · ",1)[0]),
+        );
+        break;
+      } catch (error) {
+        if (attempt) throw error;
+      }
+    }
+    await log(true, provider.usageMetadata);
+    quota.commit();
+    return json({ data:clean, ai:true });
   } catch {
     if (called) await log(false);
     return json(
@@ -414,5 +424,7 @@ async function studioAssist(request, env, url, user) {
       },
       502,
     );
+  } finally {
+    await quota.refund();
   }
 }

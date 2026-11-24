@@ -75,3 +75,7 @@ Configure Supabase Auth's site URL and allowed redirect URLs for the Vite develo
 npm run build
 npm run lint
 ```
+
+## Aithya Shared Projects portal
+
+Use npm from the repository root. Run `npm run install:studio` to install the portal, then `npm run dev` for the local UI or `npm run build` for the Vercel-compatible output in `aithya-studio/public-vercel`. The local server serves the frontend and connects to Supabase for authenticated data. Provider calls require the hosted server adapter and its secrets. The v2 [implementation report](docs/portal-v2.md) documents the migration and verification.

@@ -28,7 +28,13 @@ const plannedTask = obj({
   dep: { type: ["integer", "null"] },
 });
 const milestone = obj({ name: str, due: str });
-export const taskInputFields = ["rules", "title", "notes", "question", "log"];
+const threadItems = obj({ items: arr(obj({
+  text:str,
+  source:str,
+  why:str,
+  confidence:{type:"string", enum:["high","medium","low"]},
+}),5) });
+export const taskInputFields = ["rules", "title", "notes", "question", "log", "selectedTask"];
 export const assistContracts = {
   "tasks.extract": [
     ["notes", "team"],
@@ -151,18 +157,34 @@ export const assistContracts = {
   ],
   "chat.summary": [
     ["messages"],
-    "Summarize the discussion, decisions and unresolved questions.",
-    obj({ summary: str, decisions: arr(str), open: arr(str) }),
+    "Summarize up to five concrete updates from the selected thread. Cite an exact supplied message id as source, give a brief why, and leave unsupported conclusions out. Use the language of the discussion.",
+    threadItems,
   ],
   "chat.actions": [
-    ["messages", "team"],
-    "Identify explicit action items and their owners.",
-    obj({ actions: arr(action) }),
+    ["messages"],
+    "Extract up to five explicit action items. Cite the exact supplied message id as source, give a brief why, and never infer a person or deadline. Use the language of the discussion.",
+    threadItems,
+  ],
+  "chat.decisions": [
+    ["messages"],
+    "Extract up to five explicitly agreed decisions. Cite an exact supplied message id as source, give a brief why, and omit unresolved questions. Use the language of the discussion.",
+    threadItems,
   ],
   "notes.summary": [
     ["notes", "team"],
     "Summarize shared meeting notes, decisions and agreed actions.",
     obj({ summary: str, decisions: arr(str), actions: arr(action) }),
+  ],
+  "task.mentor": [
+    ["question","tasks"],
+    "Propose exactly one project task change requested by the user. A task marked selected is the default when the user refers to the current task. Use a listed task id for edit or delete and an empty id for create. If the request is ambiguous use none and ask a followup in reason. Never perform changes. For edit leave unspecified fields empty, and preserve other fields.",
+    obj({
+      action:{type:"string",enum:["create","edit","delete","none"]},
+      taskId:{...str,minLength:0},title:{...str,minLength:0},
+      priority:{type:"string",enum:["","urgent","high","normal","low"],minLength:0},
+      status:{type:"string",enum:["","open","in_progress","review","done"],minLength:0},
+      reason:str,
+    }),
   ],
   mentor: [
     ["question", "project", "rules", "tasks", "messages"],

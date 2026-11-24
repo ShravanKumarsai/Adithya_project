@@ -1,46 +1,39 @@
-import {applyStudioAppearance,studioAppearance} from "./studio-appearance.js";
+import { mountIntakeChat } from "./portal/intake-chat.js";
+import { updateTask } from "./portal/status.js";
+import { deadlineLabel, sections } from "./portal/routes.js";
+import { updateProjectStatus } from "./portal/status.js";
+import { button, escape, skeleton } from "./studio-ui.js";
+import { collectWizardPolicy } from "./wizard-policy.js";
+import {applyStudioAppearance,preferredTheme,studioAppearance} from "./studio-appearance.js";
 import {mountReport} from "./studio-report.js";
-import {mountBlueprint} from "./blueprint.js";
 import {studioSkills} from "./assist-contract.js";
-import { insightsView } from "./project-insights.js";
+import { todayView } from "./project-insights.js";
 import { openRulebookImport } from "./shared-rulebook.js";
 import { notifications } from "./shared-notifications.js";
+import { renderPlanning } from "./shared-planning.js";
 import { renderPortfolio } from "./shared-portfolio.js";
 import { supabase as db } from "./lib/supabase.js";
 
 let detachSheet=()=>{};
-const themeButton=document.querySelector("#blueprint-theme");
-const themes=["dark","light","blueprint"];
-const nextTheme=theme=>themes[(themes.indexOf(theme)+1)%themes.length];
-function setTheme(theme){
-  applyStudioAppearance({...studioAppearance(),theme});
-  themeButton.textContent="Use "+(nextTheme(theme)==="dark"?"Midnight":nextTheme(theme))+" theme";
+function loadLegacyFonts() {
+  if (document.getElementById("studio-legacy-fonts")) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.id = "studio-legacy-fonts";
+  link.href = "https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Special+Elite&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Mono:wght@700&display=swap";
+  document.head.append(link);
 }
-applyStudioAppearance();
-setTheme(studioAppearance().theme);
-themeButton.onclick=()=>{
-  const theme=nextTheme(document.documentElement.dataset.blueprint);
-  setTheme(theme);
-  localStorage.setItem("aithya.theme",theme);
-};
+function setTheme(theme, remember = false){
+  applyStudioAppearance({...studioAppearance(),theme}, {remember});
+  if (theme === "blueprint" || theme === "light") loadLegacyFonts();
+}
+function applyRouteTheme(inProject) {
+  document.documentElement.dataset.studioView = inProject ? "project" : "directory";
+  setTheme(preferredTheme() || "light");
+}
+applyRouteTheme(new URL(location.href).searchParams.has("project"));
 const main = document.getElementById("shared-main");
 const dialog = document.getElementById("shared-dialog");
-const escape = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (char) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        char
-      ],
-  );
-const button = (id, label, primary = false) =>
-  '<button type="button" class="button ' +
-  (primary ? "primary" : "subtle") +
-  '" id="' +
-  id +
-  '">' +
-  escape(label) +
-  "</button>";
 const field = (name, label, value = "", type = "text", required = false) =>
   '<label for="f-' +
   name +
@@ -123,14 +116,31 @@ let session,
   authMode = "login",
   generation = 0,
   wizard = null;
-let saveQueue = Promise.resolve(),
-  saveTimer;
-let draftChanges = 0,
-  savedChanges = 0;
+const wizardKey = () => "drafdeck.setup." + session?.user.id;
+function tabDraft() {
+  try {
+    return JSON.parse(sessionStorage.getItem(wizardKey()) || "null");
+  } catch {
+    return null;
+  }
+}
+function rememberDraft() {
+  const feedback = document.getElementById("draft-state");
+  try {
+    sessionStorage.setItem(wizardKey(), JSON.stringify(wizard));
+    if (feedback) feedback.textContent = "Kept in this tab";
+  } catch {
+    if (feedback) feedback.textContent = "Keep this tab open to retain your edits";
+  }
+}
+function discardDraft() {
+  sessionStorage.removeItem(wizardKey());
+  wizard = null;
+}
 const pendingToken = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (pendingToken) {
   sessionStorage.setItem("aithya.shared.invite", pendingToken);
-  history.replaceState(null, "", location.pathname);
+  history.replaceState(null, "", location.pathname + location.search);
 }
 document.getElementById("shared-close").onclick = () => dialog.close();
 function notify(message) {
@@ -166,12 +176,12 @@ function bind(id, fn) {
     }
   };
 }
-function modal(title, html, save, afterSave = loadProject) {
+function modal(title, html, save, afterSave = loadProject, submitLabel = "Save") {
   document.getElementById("shared-title").textContent = title;
   document.getElementById("shared-dialog-body").innerHTML =
     '<form id="shared-form" class="shared-form">' +
     html +
-    '<div id="modal-error" role="alert"></div><button class="button primary">Save</button></form>';
+    '<div id="modal-error" role="alert"></div><button class="button primary">' + escape(submitLabel) + '</button></form>';
   if (!dialog.open) dialog.showModal();
   document.getElementById("shared-form").onsubmit = async (e) => {
     e.preventDefault();
@@ -202,95 +212,86 @@ function confirmAction(title, description, action) {
   );
 }
 function authScreen() {
-  const titles = {
-    login: "Welcome back",
-    register: "Create your account",
-    reset: "Reset your password",
-    recover: "Choose a new password",
-  };
-  main.innerHTML =
-    '<section class="auth-panel"><h1>' +
-    titles[authMode] +
-    '</h1><p class="shared-muted">One Aithya account for all your team projects.</p><form id="auth-form" class="shared-form">' +
-    (authMode === "register"
-      ? field("name", "Full name", "", "text", true)
-      : "") +
-    (authMode !== "recover" ? field("email", "Email", "", "email", true) : "") +
-    (authMode !== "reset"
-      ? field("password", "Password", "", "password", true)
-      : "") +
-    '<div id="auth-error" role="alert"></div><button class="button primary">' +
-    {
-      login: "Sign in",
-      register: "Create account",
-      reset: "Send reset link",
-      recover: "Update password",
-    }[authMode] +
-    "</button></form><nav>" +
-    ["login", "register", "reset"]
-      .filter((m) => m !== authMode)
-      .map((m) =>
-        button(
-          "auth-" + m,
-          { login: "Sign in", register: "Register", reset: "Forgot password?" }[
-            m
-          ],
-        ),
-      )
-      .join("") +
-    "</nav></section>";
-  for (const mode of ["login", "register", "reset"])
-    bind("auth-" + mode, () => {
-      authMode = mode;
-      authScreen();
-    });
-  document.getElementById("auth-form").onsubmit = async (e) => {
-    e.preventDefault();
-    e.submitter.disabled = true;
-    const form = new FormData(e.currentTarget),
-      email = String(form.get("email") || "").trim(),
-      password = String(form.get("password") || "");
+  const recovery = authMode === "recover";
+  const reset = authMode === "reset";
+  main.innerHTML = '<section class="auth-panel"><h1>' +
+    (recovery ? "Choose a new password" : reset ? "Reset your password" : "Welcome to DraftDeck") +
+    '</h1><p class="shared-muted">Use your Google account to create or join a project.</p>' +
+    (!reset && !recovery ? button("google-login","Continue with Google",true) + '<details><summary>Sign in with an existing password</summary>' : '') +
+    '<form id="auth-form" class="shared-form">' +
+    (!recovery ? field("email","Email","","email",true) : "") +
+    (!reset ? field("password","Password","","password",true) : "") +
+    '<button class="button subtle">' + (recovery ? "Update password" : reset ? "Send reset link" : "Sign in") +
+    '</button></form>' + button(reset ? "auth-login" : "auth-reset",reset ? "Back to sign in" : "Forgot password?") +
+    (!reset && !recovery ? "</details>" : "") + '<div id="auth-error" role="alert"></div></section>';
+  bind("google-login", async () => {
+    const redirect = new URL("/shared",location.origin);
+    const activePage = new URL(location.href);
+    for (const name of ["project","sheet"]) if (activePage.searchParams.has(name))
+      redirect.searchParams.set(name,activePage.searchParams.get(name));
+    const {error} = await db.auth.signInWithOAuth({provider:"google",options:{redirectTo:redirect.href}});
+    if (error) document.getElementById("auth-error").innerHTML = errorBox(error);
+  });
+  bind("auth-reset",()=>{authMode="reset";authScreen();});
+  bind("auth-login",()=>{authMode="login";authScreen();});
+  document.getElementById("auth-form").onsubmit=async event=>{
+    event.preventDefault();
+    event.submitter.disabled=true;
+    const form=new FormData(event.currentTarget);
+    const email=String(form.get("email")||"").trim().toLowerCase();
+    const password=String(form.get("password")||"");
     try {
-      if (["register", "recover"].includes(authMode) && password.length < 10)
-        throw Error("Use at least 10 characters for your password.");
-      if (authMode === "login")
-        await result(db.auth.signInWithPassword({ email, password }));
-      if (authMode === "register") {
-        const response = await result(
-          db.auth.signUp({
-            email,
-            password,
-            options: {
-              data: { full_name: String(form.get("name")).trim() },
-              emailRedirectTo: location.origin + "/shared",
-            },
-          }),
-        );
-        if (!response.session)
-          notify("Check your email to verify your account, then sign in.");
-      }
-      if (authMode === "reset") {
-        await result(
-          db.auth.resetPasswordForEmail(email, {
-            redirectTo: location.origin + "/shared",
-          }),
-        );
-        notify("Check your email for the recovery link.");
-      }
-      if (authMode === "recover") {
-        await result(db.auth.updateUser({ password }));
-        authMode = "login";
+      if (recovery) {
+        if (password.length<10) throw Error("Use at least 10 characters.");
+        await result(db.auth.updateUser({password}));
+        authMode="login";
         await workspace();
-      }
-    } catch (err) {
-      document.getElementById("auth-error").innerHTML = errorBox(err);
-    } finally {
-      if (e.submitter) e.submitter.disabled = false;
-    }
+      } else if (reset) {
+        await result(db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+"/shared"}));
+        notify("Check your email for the recovery link.");
+      } else await result(db.auth.signInWithPassword({email,password}));
+    } catch (error) {
+      document.getElementById("auth-error").innerHTML=errorBox(error);
+    } finally {event.submitter.disabled=false;}
   };
+}
+
+const profileFields = [
+  ["hackathons","Hackathons participated in"],["experience","Projects and contributions"],
+  ["roles","Previous roles"],["skills","Skills"],["interests","Roles you’d like to try"],["availability","Availability"],
+];
+async function openAccountInterview(saved = {}) {
+  main.innerHTML='<section class="intake-page"><header class="shared-header"><div><h1>Set up your profile</h1>' +
+    '<p>Review the skills and interests you can choose to share when you join a team.</p></div></header><div id="account-intake"></div></section>';
+  const host=document.getElementById("account-intake");
+  const edit=values=>{
+    host.innerHTML='<form id="profile-review" class="shared-form"><h2>Review your profile</h2>'+
+      profileFields.map(([key,label])=>area(key,label,values[key]||"")).join("")+
+      '<button class="button primary">Save and open dashboard</button><p role="status"></p></form>';
+    host.querySelector("form").onsubmit=async event=>{
+      event.preventDefault();
+      const submit=event.submitter;
+      const state=event.currentTarget.querySelector('[role="status"]');
+      const intake=Object.fromEntries([...new FormData(event.currentTarget)].map(([key,value])=>[key,String(value).trim().slice(0,1000)]));
+      if (!intake.skills && !intake.interests) {state.textContent="Enter a skill or a role you’d like to try.";return;}
+      submit.disabled=true;
+      state.textContent="Saving your profile…";
+      try {
+        await result(db.from("studio_account_profiles").upsert({user_id:session.user.id,intake},{onConflict:"user_id"}));
+        if (new URL(location.href).searchParams.get("view") === "profile")
+          await navigate("/shared");
+        else await workspace();
+      } catch (error) {
+        state.textContent=error.message;
+        submit.disabled=false;
+      }
+    };
+  };
+  mountIntakeChat(host,{db,mode:"profile",draft:saved,onReview:edit,onManual:edit});
 }
 async function workspace() {
   detachSheet();
+  detachSheet = () => {};
   const version = ++generation;
   project = null;
   wizard = null;
@@ -298,54 +299,80 @@ async function workspace() {
     ? button("signout", "Sign out")
     : "";
   notificationPanel.refresh();
-  const portfolioButton = document.getElementById("portfolio-nav");
-  portfolioButton.hidden = !session;
-  portfolioButton.onclick = async () => {
-    if (!session) return;
-    if (wizard && draftChanges > savedChanges) {
-      try {
-        await queueDraft();
-      } catch (error) {
-        notify(error.message);
-        return;
-      }
-    }
-    detachSheet();
-    generation++;
-    project = null;
-    wizard = null;
-    clearTimeout(saveTimer);
-    return renderPortfolio({
-      db,
-      main,
-      user: session.user,
-      result,
-      escape,
-      button,
-      field,
-      area,
-      select,
-      bind,
-      modal,
-      notify,
-      back: workspace,
-    });
-  };
+  const route = new URL(location.href);
+  const activeRoute = route.searchParams.get("view") || (route.pathname === "/" ? "today" : "projects");
+  const nav = document.querySelector("#studio-global-nav");
+  nav.hidden = !session;
+  applyRouteTheme(route.searchParams.has("project"));
+  document.querySelector("#studio-command").hidden = !session || !route.searchParams.has("project");
+  for (const link of nav.querySelectorAll("a")) {
+    const destination = new URL(link.href);
+    const page = destination.searchParams.get("view") || (destination.pathname === "/" ? "today" : "projects");
+    if (page === activeRoute) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
   bind("signout", async () => {
+    discardDraft();
     await result(db.auth.signOut());
   });
   if (!session) {
     authScreen();
     return;
   }
+  if (session.user.app_metadata?.provider === "google" || activeRoute === "profile") {
+    main.innerHTML=skeleton("Loading your profile");
+    const profile = await db.from("studio_account_profiles").select("intake").eq("user_id",session.user.id).maybeSingle();
+    if (version !== generation) return;
+    if (!profile.error && (!profile.data || activeRoute === "profile")) {
+      nav.hidden = !profile.data;
+      await openAccountInterview(profile.data?.intake);
+      return;
+    }
+    if (profile.error) {
+      const setupPending = ["42P01","PGRST205"].includes(profile.error.code);
+      main.innerHTML=errorBox(setupPending ? new Error("Profile setup is still being configured. Please try again later.") : profile.error)+button("profile-retry","Retry profile");
+      bind("profile-retry",workspace);
+      return;
+    }
+  }
   if (sessionStorage.getItem("aithya.shared.invite")) {
     await inviteScreen();
     return;
   }
-  main.innerHTML = empty("Loading your projects…");
+  if (activeRoute === "portfolio") {
+    await renderPortfolio({db, main, user:session.user, result, escape, button, field, area, select,
+      bind, modal, notify, back:() => navigate("/shared")});
+    return;
+  }
+  if (activeRoute === "settings") {
+    main.innerHTML = '<header class="shared-header"><h1>Settings</h1></header>' +
+      '<section class="bp-panel"><h2>Appearance</h2>' +
+      select("global-theme", "Theme", [["light","Light"],["blueprint","Blueprint"]], studioAppearance().theme) +
+      '</section>';
+    document.getElementById("f-global-theme").onchange = (event) => setTheme(event.target.value,true);
+    return;
+  }
+  main.innerHTML = skeleton("Loading your workspace");
   try {
-    const insights = location.pathname === "/";
-    const [projects, drafts, totals] = await Promise.all([
+    const insights = activeRoute === "today";
+    if (activeRoute === "usage") {
+      const [projects, accounts, connections] = await Promise.all([
+        result(db.from("projects").select("id,name,archived_at").is("archived_at",null)),
+        result(db.from("studio_ai_accounts").select("project_id").eq("user_id", session.user.id)),
+        result(db.from("studio_claude_connections").select("project_id,provider").eq("user_id", session.user.id)),
+      ]);
+      if (version !== generation) return;
+      main.innerHTML = '<header class="shared-header"><h1>AI usage</h1></header><section class="project-list">' +
+        (projects.map((item) => {
+          const connected = connections.filter((c) => c.project_id === item.id).length;
+          const manual = accounts.filter((c) => c.project_id === item.id).length;
+          return '<article class="project-entry"><div><h2>' + escape(item.name) + '</h2><p>' +
+            connected + ' live · ' + manual + ' manual</p></div><a class="button subtle" data-studio-route href="/shared?project=' +
+            encodeURIComponent(item.id) + '&amp;sheet=AI+credits">AI credits</a></article>';
+        }).join("") || '<p>No projects yet.</p>') + '</section>';
+      return;
+    }
+    const [projects, serverDrafts, totals] = await Promise.all([
       result(
         db
           .from("projects")
@@ -363,86 +390,60 @@ async function workspace() {
     ]);
     if (version !== generation) return;
     if (insights) {
-      main.innerHTML = insightsView(projects, totals, escape);
-      bind("refresh-insights", workspace);
+      const [tasks, events] = await Promise.all([
+        result(db.from("project_tasks").select("*").eq("owner_id",session.user.id)
+          .neq("status","done").order("due_date",{nullsFirst:false}).limit(80)),
+        rpc("project_notification_feed").catch(() => []),
+      ]);
+      const blocked = tasks.length ? await result(db.from("project_tasks").select("id,project_id,title,status,due_date")
+        .in("blocked_by",tasks.map((task) => task.id)).neq("status","done").limit(40)) : [];
+      if (version !== generation) return;
+      main.innerHTML = todayView({projects, totals, tasks, events, blocked, escape,
+        userName:session.user.user_metadata?.full_name?.trim().split(/\s+/)[0]});
+      for (const control of main.querySelectorAll("[data-today-task]")) control.onchange = async () => {
+        control.disabled = true;
+        try {
+          await updateTask(db, tasks.find(task => task.id === control.dataset.todayTask), {status:control.value});
+          notify("Task updated.");
+          await workspace();
+        } catch (error) {
+          control.value = tasks.find((task) => task.id === control.dataset.todayTask).status;
+          notify(error.message);
+          control.disabled = false;
+        }
+      };
       return;
     }
     const requested = new URLSearchParams(location.search).get("project");
     if (requested) {
-      history.replaceState(null, "", "/shared");
       const match = projects.find(p => p.id === requested);
-      if (match) return openProject(match);
+      if (match) return openProject(match, route.searchParams.get("sheet") || "Overview", false);
+      history.replaceState(null, "", "/shared");
       notify("This project is unavailable for this account.");
     }
-    main.innerHTML =
-      '<header class="shared-header"><div><h1>Shared projects</h1><p class="shared-muted">Your team work, drafts, and next steps.</p></div>' +
-      '<div class="shared-actions">' +
-      button("new-project", "Create project", true) +
-      button("new-project-from-rules", "Create from rulebook") +
-      "</div></header>" +
-      (drafts.length
-        ? "<section><h2>Continue setup</h2>" +
-          drafts
-            .map(
-              (d) =>
-                '<div class="project-entry"><div><b>' +
-                escape(d.content.project?.name || "Untitled draft") +
-                "</b><p>Saved " +
-                when(d.updated_at) +
-                "</p></div>" +
-                button("draft-" + d.id, "Resume") +
-                "</div>",
-            )
-            .join("") +
-          "</section>"
-        : "") +
-      '<section class="project-list">' +
-      projects
-        .filter((p) => !p.archived_at)
-        .map(projectEntry)
-        .join("") +
-      (projects.every((p) => p.archived_at)
-        ? empty("Create a project or accept an invitation to get started.")
-        : "") +
-      "</section>" +
-      (projects.some((p) => p.archived_at)
-        ? "<details><summary>Archived projects</summary>" +
-          projects
-            .filter((p) => p.archived_at)
-            .map(projectEntry)
-            .join("") +
-          "</details>"
-        : "");
-    bind("new-project", () => openWizard());
-    bind("new-project-from-rules", () => {
-      openWizard();
-      document.getElementById("import-hackathon-rules").click();
+    const pending = tabDraft();
+    const drafts = pending ? [pending, ...serverDrafts.filter(d => d.id !== pending.id)] : serverDrafts;
+    const {mountProjectDirectory} = await import("./portal/ProjectDirectory.tsx");
+    if (version !== generation) return;
+    main.replaceChildren();
+    detachSheet = mountProjectDirectory(main, {
+      projects, drafts,
+      open: record => openProject(record).catch(error => notify(error.message)),
+      resume: openWizard,
+      create: fromRules => {
+        openWizard();
+        if (fromRules) document.getElementById("import-hackathon-rules").click();
+      },
     });
-    for (const d of drafts) bind("draft-" + d.id, () => openWizard(d));
-    for (const p of projects) bind("project-" + p.id, () => openProject(p));
+    if (route.searchParams.get("start") === "rulebook") {
+      history.replaceState(null,"","/shared");
+      document.getElementById("new-project-from-rules").click();
+    }
   } catch (err) {
+    if (version !== generation) return;
     main.innerHTML = errorBox(err) + button("retry-workspace", "Retry");
     bind("retry-workspace", workspace);
   }
-}
-function projectEntry(p) {
-  return (
-    '<article class="project-entry"><div><h2>' +
-    escape(p.name) +
-    "</h2><p>" +
-    escape(
-      [
-        p.hackathon_name,
-        p.theme,
-        p.submission_deadline ? "Due " + p.submission_deadline : "",
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    ) +
-    "</p></div>" +
-    button("project-" + p.id, "Open project") +
-    "</article>"
-  );
 }
 async function inviteScreen() {
   main.innerHTML = empty("Checking invitation…");
@@ -455,30 +456,24 @@ async function inviteScreen() {
     main.innerHTML =
       '<section class="auth-panel"><h1>Join ' +
       escape(invite.project_name) +
-      "</h1><p>This invitation is for " +
-      escape(invite.member_name) +
-      ".</p><p>Signed in as " +
-      escape(session.user.email) +
-      '.</p><form id="claim-form" class="shared-form">' +
-      check(
-        "confirm",
-        "I am the intended teammate and want to join this project.",
-      ) +
-      '<button class="button primary">Accept invitation</button><div id="claim-error"></div></form>' +
+      "</h1><p>Signed in as " + escape(session.user.email) +
+      '.</p><p>Vercel is optional. You can join now and connect a deployment later.</p><form id="claim-form" class="shared-form">' +
+      check("share_profile","Share my skills and role interests with this team") +
+      '<button class="button primary">Join project</button><div id="claim-error" role="alert"></div></form>' +
       button("cancel-invite", "Back to projects") +
       "</section>";
     document.getElementById("claim-form").onsubmit = async (e) => {
       e.preventDefault();
       e.submitter.disabled = true;
       try {
-        if (!new FormData(e.currentTarget).has("confirm"))
-          throw Error("Confirm your identity before joining.");
-        await rpc("accept_member_invitation", {
-          p_token: token,
-          p_confirm: true,
-        });
+        const shared = new FormData(e.currentTarget).has("share_profile");
+        const joined = await db.rpc("claim_studio_join_link",{p_token:token,p_share_profile:shared});
+        if (joined.error?.code === "PGRST202") await rpc("accept_member_invitation",{p_token:token,p_confirm:true});
+        else if (joined.error) throw joined.error;
         sessionStorage.removeItem("aithya.shared.invite");
-        await workspace();
+        const id=joined.data?.project_id || invite.project_id;
+        if (id) await navigate(projectURL(id,"Team"));
+        else await workspace();
       } catch (err) {
         document.getElementById("claim-error").innerHTML = errorBox(err);
         e.submitter.disabled = false;
@@ -507,8 +502,8 @@ const projectFields = [
   ["workflow_content", "Existing workflow"],
 ];
 function openWizard(draft) {
-  draftChanges = 0;
-  savedChanges = 0;
+  detachSheet();
+  detachSheet = () => {};
   wizard = draft
     ? structuredClone(draft)
     : {
@@ -523,16 +518,15 @@ function openWizard(draft) {
         },
       };
   renderWizard();
+  rememberDraft();
 }
 function renderWizard() {
-  const content = wizard.content,
-    step = content.step || 0;
+  const content = wizard.content;
+  const step = content.step > 0 ? 1 : 0;
   const projectData = content.project || {},
     requirements = content.requirements || {},
     ai = content.ai || {};
-  let fields;
-  if (step === 0)
-    fields = projectFields
+  const briefFields = projectFields
       .map(([key, label]) => {
         const value = Array.isArray(projectData[key])
           ? projectData[key].join("\n")
@@ -556,9 +550,7 @@ function renderWizard() {
             );
       })
       .join("");
-  else if (step === 1)
-    fields =
-      area(
+  const ruleFields = area(
         "judging_criteria",
         "Judging criteria",
         requirements.judging_criteria?.join("\n"),
@@ -572,8 +564,8 @@ function renderWizard() {
         "restrictions",
         "Submission restrictions",
         requirements.restrictions?.join("\n"),
-      ) +
-      area(
+      );
+  const policyFields = area(
         "permitted_ai_tools",
         "Permitted AI tools",
         ai.permitted_ai_tools?.join("\n"),
@@ -614,25 +606,20 @@ function renderWizard() {
         "Additional AI instructions",
         ai.other_requirements,
       );
-  else
-    fields =
-      "<p>Your account becomes the project leader. Add teammates and upload rulebooks after creating the project.</p><h2>" +
-      escape(projectData.name || "Untitled project") +
-      '</h2><ul class="shared-checks">' +
-      status("Problem statement", projectData.problem_statement) +
-      status("Deadline", projectData.submission_deadline) +
-      status("Deliverables", projectData.expected_deliverables?.length) +
-      status(
-        "Official requirements",
-        requirements.mandatory_requirements?.length,
-      ) +
-      status("Workflow", projectData.workflow_content) +
-      '</ul><p class="shared-muted">You can complete missing information after creation.</p>';
+  const group = (name, markup, open = false) =>
+    '<details class="wizard-group"' + (open ? ' open' : '') + '><summary>' + name + '</summary>' + markup + '</details>';
+  const fields = step === 0
+    ? '<section class="intake-page"><h2>Plan your project with Gemini</h2><div id="project-intake"></div>' +
+      '<button type="button" id="import-hackathon-rules" class="button subtle">Import hackathon rules</button></section>'
+    : group("Project brief",briefFields,true) + group("Rules and judging",ruleFields) + group("AI policy",policyFields) +
+      group("Work and team",area("tasks","Tasks, one per line",content.work?.tasks?.join("\n")) +
+        area("milestones","Milestones, YYYY-MM-DD | name",content.work?.milestones?.join("\n")) +
+        area("roles","Suggested roles, one per line",content.work?.roles?.join("\n")));
   main.innerHTML =
     '<header class="shared-header"><h1>Project setup</h1>' +
-    button("close-wizard", "Back to projects") +
+    button("close-wizard", "Cancel setup") +
     '</header><nav class="wizard-steps">' +
-    ["Project brief", "Rules & AI policy", "Review"]
+    ["Source", "Review"]
       .map(
         (label, i) =>
           '<button id="step-' +
@@ -643,178 +630,255 @@ function renderWizard() {
           label +
           "</button>",
       )
-      .join("") +
-    '</nav><form id="wizard-form" class="shared-form"><div class="shared-columns"><section>' +
-    fields +
-    '</section><section class="draft-info"><h3>Saved as you work</h3><p id="draft-state" role="status">Draft ready</p><p class="shared-muted">Drafts are private to your account. Creating the project makes it available to accepted members.</p></section></div><div id="wizard-error"></div><div class="shared-actions">' +
-    button("save-draft", "Save draft") +
-    button("wizard-next", step < 2 ? "Continue" : "Create project", true) +
-    '</div><p><a href="#import-hackathon-rules" class="text-link" id="import-hackathon-rules">Import hackathon rules</a></p></form>';
+      .join("") + '</nav>' +
+    (step === 0 ? fields :
+      '<form id="wizard-form" class="shared-form"><div class="shared-columns"><section>' + fields +
+      '</section><section class="draft-info"><h3>Draft</h3><p id="draft-state" role="status">Kept in this tab</p><p class="shared-muted">Review before creating the project.</p></section></div><div id="wizard-error" role="alert"></div><div class="shared-actions">' +
+      button("wizard-next", "Create project", true) + '</div></form>');
   const form = document.getElementById("wizard-form");
-  form.onsubmit = (e) => e.preventDefault();
+  if (form) form.onsubmit = (e) => e.preventDefault();
   const collect = () => {
+    if (!form) return;
     const values = Object.fromEntries(new FormData(form));
-    if (step === 0) {
-      content.project = { ...projectData, ...values };
-      for (const key of ["expected_deliverables", "technology_stack"])
-        content.project[key] = lines(values[key]);
-      content.project.workflow_status = values.workflow_content?.trim()
-        ? "provided"
-        : "requires_generation";
-    }
-    if (step === 1) {
-      content.requirements = Object.fromEntries(
-        ["judging_criteria", "mandatory_requirements", "restrictions"].map(
-          (key) => [key, lines(values[key])],
-        ),
-      );
-      content.ai = { ...ai, ...values };
-      for (const key of [
-        "permitted_ai_tools",
-        "prohibited_ai_tools",
-        "permitted_models",
-      ])
-        content.ai[key] = lines(values[key]);
-      for (const key of [
-        "external_ai_apis_allowed",
-        "ai_generated_code_allowed",
-        "ai_generated_research_allowed",
-      ])
-        content.ai[key] = values[key] === "on";
-    }
+    content.project = {...projectData, ...Object.fromEntries(projectFields.map(([key]) => [key,values[key] || ""]))};
+    for (const key of ["expected_deliverables","technology_stack"]) content.project[key] = lines(values[key]);
+    content.project.workflow_status = values.workflow_content?.trim() ? "provided" : "requires_generation";
+    content.requirements = Object.fromEntries(
+      ["judging_criteria","mandatory_requirements","restrictions"].map((key) => [key,lines(values[key])]),
+    );
+    content.ai = collectWizardPolicy(values,ai);
+    content.work = Object.fromEntries(["tasks","milestones","roles"].map(key=>[key,lines(values[key])]));
   };
-  document.getElementById("import-hackathon-rules").onclick = (event) => {
-    event.preventDefault();
-    collect();
-    openRulebookImport({
-      dialog,
-      draft: content,
-      escape,
-      onApply: async (labels) => {
-        draftChanges++;
-        content.step = step === 2 ? 0 : step;
-        renderWizard();
-        try {
-          await queueDraft();
-          notify(
-            "Filled " +
-              labels.length +
-              " " +
-              (labels.length === 1 ? "field" : "fields") +
-              ". Review the setup and fill the remaining blanks.",
-          );
-        } catch (error) {
-          notify(error.message);
+  const conversation=document.getElementById("project-intake");
+  if (conversation) {
+    const fill=fields=>{
+      const listKeys=new Set(["expected_deliverables","technology_stack","judging_criteria","mandatory_requirements","restrictions","permitted_ai_tools","prohibited_ai_tools","permitted_models","tasks","milestones","roles"]);
+      const write=(group,keys)=>{
+        content[group] ||= {};
+        for (const key of keys) {
+          const value=fields[key];
+          if (!value || (["start_date","submission_deadline"].includes(key) && !/^\d{4}-\d{2}-\d{2}$/.test(value))) continue;
+          content[group][key]=listKeys.has(key)?lines(value):value;
         }
-        document.getElementById("import-hackathon-rules")?.focus();
-      },
-    });
-  };
-  form.addEventListener("input", () => {
-    collect();
-    draftChanges++;
-    clearTimeout(saveTimer);
-    document.getElementById("draft-state").textContent = "Unsaved changes…";
-    saveTimer = setTimeout(() => queueDraft().catch(() => {}), 700);
-  });
-  async function move(next) {
-    collect();
-    await queueDraft();
-    content.step = next;
-    await queueDraft();
-    renderWizard();
+      };
+      write("project",projectFields.map(([key])=>key));
+      write("requirements",["judging_criteria","mandatory_requirements","restrictions"]);
+      write("ai",["permitted_ai_tools","prohibited_ai_tools","permitted_models","privacy_restrictions","data_handling","other_requirements"]);
+      write("work",["tasks","milestones","roles"]);
+      move(1);
+    };
+    mountIntakeChat(conversation,{db,mode:"project",onReview:fill,onManual:fill});
   }
-  for (let i = 0; i < 3; i++) bind("step-" + i, () => move(i));
-  bind("save-draft", () => {
-    collect();
-    return queueDraft();
+  const importer = document.getElementById("import-hackathon-rules");
+  if (importer) importer.onclick = () => openRulebookImport({
+    dialog, draft:content, escape,
+    onApply: async (labels) => {
+      if (!content.project?.name && content.project?.hackathon_name)
+        content.project.name = content.project.hackathon_name.slice(0,120);
+      content.step = 1;
+      renderWizard();
+      rememberDraft();
+      notify("Imported " + labels.length + " fields. Review before creating the project.");
+      document.getElementById("f-name")?.focus();
+    },
   });
-  bind("close-wizard", async () => {
+  form?.addEventListener("input", event => {
+    if (content.sources && event.target.name) {
+      for (const group of ["project","requirements","ai"]) delete content.sources[group + "." + event.target.name];
+    }
     collect();
-    await queueDraft();
+    rememberDraft();
+  });
+  function move(next) {
+    if (step === next) return;
+    collect();
+    content.step = next;
+    renderWizard();
+    rememberDraft();
+    document.getElementById("step-" + next)?.focus();
+  }
+  for (let i = 0; i < 2; i++) bind("step-" + i, () => move(i));
+  bind("close-wizard", async () => {
+    discardDraft();
     await workspace();
   });
   bind("wizard-next", async () => {
     collect();
     const p = content.project;
-    if (step === 0) {
-      if (!p.name?.trim() || p.name.trim().length < 2)
-        throw Error("Enter a project name with at least two characters.");
-      if (
-        p.start_date &&
-        p.submission_deadline &&
-        p.start_date > p.submission_deadline
-      )
-        throw Error("The deadline must follow the start date.");
-      if (p.repository && !/^[\w-]+\/[\w.-]+$/.test(p.repository))
-        throw Error("Use owner/repository for the GitHub repository.");
+    const validation = document.getElementById("wizard-error");
+    validation.textContent = "";
+    let error = "";
+    if (!p.name?.trim() || p.name.trim().length < 2) error = "Enter a project name with at least two characters.";
+    else if (p.start_date && p.submission_deadline && p.start_date > p.submission_deadline)
+      error = "The deadline must follow the start date.";
+    if (p.repository) {
+      const repo = /^(?:https:\/\/github\.com\/)?([A-Za-z0-9-]{1,39}\/[A-Za-z0-9_.-]{1,100})\/?$/i.exec(p.repository.trim());
+      if (!repo || /\/(?:\.|\.\.)$/.test(repo[1])) error ||= "Use a GitHub repository URL or owner/repository.";
+      else p.repository = repo[1].replace(/\.git$/i,"");
     }
-    if (step < 2) {
-      await move(step + 1);
+    if (content.work?.milestones?.some(line => {
+      const date = /^(\d{4}-\d{2}-\d{2})\s+\|\s+.+$/.exec(line)?.[1];
+      if (!date) return true;
+      const timestamp = new Date(date);
+      return !Number.isFinite(timestamp.getTime()) || timestamp.toISOString().slice(0,10) !== date;
+    })) error ||= "Enter each milestone with a valid date as YYYY-MM-DD | milestone name.";
+    if (error) {
+      validation.textContent = error;
       return;
     }
-    await queueDraft();
-    const id = await rpc("publish_project_draft", { p_id: wizard.id });
-    notify("Project created. Add your teammates and complete your profile.");
-    const pRecord = await result(
-      db.from("projects").select("*").eq("id", id).single(),
-    );
-    await openProject(pRecord);
+    const pending = wizard;
+    document.getElementById("draft-state").textContent = "Creating project…";
+    try {
+      let id;
+      const args={p_id:pending.id,p_content:pending.content,p_revision:pending.revision};
+      let response=await db.rpc("approve_studio_intake",args);
+      if (response.error?.code === "PGRST202") {
+        if (Object.values(content.work || {}).some(values=>values.length))
+          throw Error("Work and team setup needs the guided setup database migration. Your draft is retained.");
+        response=await db.rpc("approve_portal_project",args);
+      }
+      if (response.error?.code === "PGRST202") {
+        // The older schema still requires two calls. Both happen after approval.
+        const saved = await rpc("save_project_draft", {
+          p_id: pending.id, p_content: pending.content, p_revision: pending.revision,
+        });
+        pending.revision = saved.revision;
+        rememberDraft();
+        id = await rpc("publish_project_draft", { p_id: pending.id });
+      } else {
+        if (response.error) throw response.error;
+        id = response.data;
+      }
+      if (wizard !== pending) return;
+      discardDraft();
+      notify("Project created. Add teammates when you’re ready.");
+      const record = await result(db.from("projects").select("*").eq("id", id).single());
+      await openProject(record, "Project setup");
+    } catch (error) {
+      if (wizard === pending) {
+        document.getElementById("draft-state").textContent = "Draft retained";
+        validation.textContent = error.message;
+      }
+    }
   });
 }
-function queueDraft() {
-  clearTimeout(saveTimer);
-  const target = wizard;
-  const snapshot = structuredClone(target.content);
-  const capturedChanges = draftChanges;
-  saveQueue = saveQueue
-    .catch(() => {})
-    .then(async () => {
-      try {
-        const saved = await rpc("save_project_draft", {
-          p_id: target.id,
-          p_content: snapshot,
-          p_revision: target.revision,
-        });
-        target.revision = saved.revision;
-        const label = document.getElementById("draft-state");
-        if (wizard === target) {
-          savedChanges = capturedChanges;
-          if (label)
-            label.textContent =
-              savedChanges === draftChanges
-                ? "Saved to your account"
-                : "Unsaved changes…";
-        }
-      } catch (err) {
-        const label = document.getElementById("draft-state");
-        if (label && wizard === target) label.textContent = err.message;
-        throw err;
-      }
-    });
-  return saveQueue;
+function projectURL(id, sheet) {
+  return "/shared?" + new URLSearchParams({project: id, sheet});
 }
-window.addEventListener("beforeunload", (e) => {
-  if (wizard && savedChanges < draftChanges) {
-    e.preventDefault();
-    e.returnValue = "";
-  }
-});
-async function openProject(record) {
+async function openProject(record, sheet = "Overview", updateRoute = true) {
+  if (updateRoute) history.pushState(null, "", projectURL(record.id, sheet));
+  document.getElementById("studio-global-nav").querySelectorAll("[aria-current]").forEach((link) => link.removeAttribute("aria-current"));
+  document.querySelector('#studio-global-nav a[href="/shared"]').setAttribute("aria-current","page");
   project = record;
+  applyRouteTheme(true);
+  document.getElementById("studio-command").hidden = false;
   wizard = null;
-  tab = "Overview";
+  tab = sheet;
   await loadProject();
 }
+async function navigate(path) {
+  const destination = new URL(path, location.href);
+  if (destination.href !== location.href) history.pushState(null, "", destination);
+  await workspace();
+}
+document.addEventListener("click", (event) => {
+  const link = event.target.closest?.("a[data-studio-route]");
+  if (!link || event.defaultPrevented || event.button !== 0 ||
+      event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigate(link.href).catch((error) => notify(error.message));
+});
+window.addEventListener("popstate", async () => {
+  try {
+    await workspace();
+  } catch (error) {
+    notify(error.message);
+  }
+});
+
+const commandDialog = document.getElementById("command-dialog");
+const commandQuery = document.getElementById("command-query");
+const commandResults = document.getElementById("command-results");
+document.getElementById("studio-command").onclick = async () => {
+  if (!session || commandDialog.open || dialog.open) return;
+  const active = project;
+  const entries = [
+    ["Open projects", () => navigate("/shared")],
+    ["Scan rulebook", async () => {
+      if (!document.getElementById("new-project-from-rules")) await navigate("/shared");
+      document.getElementById("new-project-from-rules")?.click();
+    }],
+    ...(active ? [
+      ["Add task", () => {
+        const quick = document.querySelector('[data-final="quick"]');
+        if (quick) quick.click();
+        else editTask();
+      }],
+      ["Ask mentor", () => {
+        showProjectSheet("AI mentor");
+        document.querySelector("#shared-content input, #shared-content textarea")?.focus();
+      }],
+    ] : []),
+  ];
+  const draw = () => {
+    const query = commandQuery.value.toLowerCase().trim();
+    const matching = entries.filter(([label]) => label.toLowerCase().includes(query));
+    commandResults.innerHTML = matching.map(([label], i) => button("command-option-" + i,label)).join("") ||
+      '<p class="shared-muted">No matching commands.</p>';
+    matching.forEach(([, run], i) => bind("command-option-" + i, () => {
+      commandDialog.close();
+      Promise.resolve().then(run).catch((error) => notify(error.message));
+    }));
+  };
+  commandQuery.value = "";
+  commandQuery.oninput = draw;
+  commandQuery.onkeydown = (event) => {
+    if (event.key === "Enter") commandResults.querySelector("button")?.click();
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      commandResults.querySelector("button")?.focus();
+    }
+  };
+  commandDialog.showModal();
+  draw();
+  try {
+    const projects = await result(db.from("projects").select("id,name").is("archived_at",null).order("updated_at",{ascending:false}).limit(25));
+    if (commandDialog.open) {
+      entries.push(...projects.map((item) => ["Open " + item.name, () => navigate(projectURL(item.id,"Overview"))]));
+      draw();
+    }
+  } catch {
+    if (commandDialog.open) commandResults.append(Object.assign(document.createElement("p"), {textContent:"Project search unavailable. Reopen Commands to retry."}));
+  }
+};
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && session && !dialog.open) {
+    event.preventDefault();
+    if (commandDialog.open) commandDialog.close();
+    else document.getElementById("studio-command").click();
+  }
+});
 async function loadProject() {
   if (!project) {
     await workspace();
     return;
   }
+  detachSheet();
+  detachSheet = () => {};
   const version = ++generation,
     id = project.id;
-  main.innerHTML = empty("Loading project records…");
+  main.innerHTML = skeleton("Loading project records");
   try {
+    const snapshot = await db.rpc("portal_project_snapshot", {p_id:id});
+    if (version !== generation) return;
+    if (!snapshot.error) {
+      if (!snapshot.data?.project) throw Error("This project is unavailable for this account.");
+      data = snapshot.data;
+      project = data.project;
+      await renderProject();
+      return;
+    }
+    if (snapshot.error.code !== "PGRST202") throw snapshot.error;
     const queries = [
       ["milestones", db.from("milestones").select("*").eq("project_id", id).order("due")],
       ["project", db.from("projects").select("*").eq("id", id).single()],
@@ -905,64 +969,111 @@ async function loadProject() {
     if (version !== generation) return;
     data = {...Object.fromEntries(entries), personalReady:!schemaProbe.error};
     project = data.project;
-    renderProject();
+    await renderProject();
   } catch (err) {
     if (version === generation) {
       main.innerHTML =
-        errorBox(err) + button("back-projects", "Back to projects");
-      bind("back-projects", workspace);
+        errorBox(err) + button("retry-project", "Retry", true) + button("back-projects", "Back to projects");
+      bind("retry-project", loadProject);
+      bind("back-projects", () => navigate("/shared"));
     }
   }
 }
 const leader = () => project?.leader_id === session?.user.id;
 const memberName = (id) =>
   data.members.find((m) => m.user_id === id)?.full_name || "Unassigned";
-function renderProject() {
+function showProjectSheet(next) {
+  if (tab === next) return;
+  tab = next;
+  history.pushState(null, "", projectURL(project.id, tab));
+  void renderProject().catch(error => notify(error.message));
+}
+async function renderProject() {
   detachSheet();
-  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings"];
-  const tabs=data.personalReady?labels:labels.filter(t=>!["My dashboard","AI credits","Register","Settings"].includes(t));
-  if(!tabs.includes(tab))tab="Overview";
-  const viewAliases={"Project setup":"Setup",Chats:"Chat","AI mentor":"Mentor","Ship check":"Ship","Planning board":"Planning"};
-  const view=viewAliases[tab]||tab;
-  const stageSheets={Idea:"Project setup",Plan:"Planning board",Team:"Team",Build:"Board",Learn:"Learning",Ship:"Ship check"};
-  const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view];
-  const days=project.submission_deadline?Math.max(0,Math.ceil((Date.parse(project.submission_deadline+"T23:59:59")-Date.now())/86400000)):null;
-  const icons=["M2 2h5v5H2zm9 0h5v5h-5zM2 11h5v5H2zm9 0h5v5h-5z","M9 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-6 7c0-5 12-5 12 0","M9 2v14M2 9h14M4 4l10 10m0-10L4 14","M2 3h14v10H7l-5 3z","M2 3h14v12H2zm5 0v12m4-12v12","M9 2v14M2 9h14","M4 4v10m0-5 10-5m-10 10 10-5","M2 13a7 7 0 0 1 14 0M9 12l4-4","M5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-4 7c0-5 8-5 8 0M11 4c5-1 6 4 2 5m-1 2c3 0 5 2 5 5","M9 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 3v4l3 2","M2 3h6l1 2 1-2h6v11h-6l-1 2-1-2H2z","M3 15l1-4 9-9 3 3-9 9z","M9 1v16M1 9h16M3 3l12 12m0-12L3 15","M2 9l5 5 9-11","M2 3h14v13H2zm3 9V8m4 4V6m4 6V9","M2 5h14v11H2zm4 0V2h6v3","M9 2v14M2 9h14","M9 1v4m0 8v4M1 9h4m8 0h4M9 5a4 4 0 1 0 .01 0z"];
-  const icon=t=>'<svg class="studio-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="'+icons[labels.indexOf(t)]+'"/></svg>';
-  main.innerHTML='<div class="bp-layout final-layout"><nav class="shared-tabs" aria-label="Project sheets"><a class="studio-rail-brand" href="/shared">✳ AITHYA</a>'+
-    tabs.map(t=>'<button type="button" aria-current="'+(tab===t?"page":"false")+'" id="tab-'+(viewAliases[t]||t.replaceAll(" ","-"))+'">'+icon(t)+escape(t)+'</button>').join("")+
-    '<div class="studio-rail-account"><small>Signed in as</small><strong>'+escape(memberName(session.user.id))+'</strong></div></nav><div class="studio-project-body">'+
-    '<header class="project-masthead studio-title-block"><div><h1>'+escape(project.name)+'</h1><p>'+escape([project.hackathon_name||project.theme,days!==null?days+" days left":""].filter(Boolean).join(" · "))+'</p></div>'+
-    '<nav class="bp-steps" aria-label="Project stages">'+Object.keys(stageSheets).map(name=>'<button type="button" id="stage-'+name+'"'+(stage===name?' aria-current="step"':'')+'>'+name+'</button>').join('')+'</nav><div class="studio-project-due"><small>Due</small><strong>'+escape(project.submission_deadline||"Unscheduled")+'</strong></div></header>'+
-    '<div id="shared-content" class="shared-content"></div></div></div>';
-  bind("back-projects", () => { location.href = "/shared"; });
-  bind("refresh-shared", loadProject);
-  for(const [name,sheet] of Object.entries(stageSheets)){
-    bind("stage-"+name,()=>{
-      tab=sheet;
-      renderProject();
-      document.getElementById("stage-"+name)?.focus();
-    });
-  }
-  for (const t of tabs)
-    bind("tab-" + (viewAliases[t]||t.replaceAll(" ","-")), () => {
-      tab = t;
-      renderProject();
-    });
+  const labels = [...Object.values(sections).flat(), "Settings", "AI credits"];
+  const tabs = labels.filter(sheet =>
+    (data.personalReady || !["My dashboard", "AI credits", "Register", "Settings"].includes(sheet)) &&
+    (data.portalReady || sheet !== "Bulletin"));
+  if (tab === "Planning board") tab = "Board";
+  if (!tabs.includes(tab)) tab = "Overview";
+  const viewAliases = {"Project setup":"Setup", Chats:"Chat", "AI mentor":"Mentor", "Ship check":"Ship", "Planning board":"Planning"};
+  const view = viewAliases[tab] || tab;
+  if (view === "Planning") loadLegacyFonts();
+  main.innerHTML =
+    '<div id="portal-project-head"></div><div id="shared-content" class="portal-shell portal-content shared-content" tabindex="-1"></div>';
+  main.dataset.area = view === "Setup" || view === "Files" ? "rules" : "";
+  const host = document.getElementById("portal-project-head");
+  const panel = document.getElementById("shared-content");
+  panel.innerHTML = skeleton("Loading project view");
+  const {mountProjectShell} = await import("./portal/ProjectShell.tsx");
+  if (!host.isConnected) return;
+  panel.replaceChildren();
+  const shell = mountProjectShell(host, { project, sheet:tab, available:tabs, open:showProjectSheet });
+  const unreadKey = "chat-count-" + session.user.id + project.id;
+  if (view === "Chat") sessionStorage.removeItem(unreadKey);
+  shell.update({unread:Number(sessionStorage.getItem(unreadKey) || 0)});
+  void updateProjectStatus(project, session, shell, tab, () => host.isConnected);
   ({
     Overview: overviewView,
     Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,escape,leader:leader()},document.getElementById("shared-content")),
+    "AI plan": () => renderPlanning({db, project, leader:leader(), ai:data.ai, escape,
+      when, result, notify, editPolicy:editAiPolicy, requirements:data.requirements, tasks:data.tasks, refresh:loadProject}),
     Setup: requirementsView,
     Team: teamView,
     Board: tasksView,
-    Portfolio:()=>renderPortfolio({db,main:document.getElementById("shared-content"),user:session.user,result,escape,button,field,area,select,bind,modal,notify,back:()=>{tab="Overview";renderProject()}}),
+    Portfolio:()=>renderPortfolio({db,main:document.getElementById("shared-content"),user:session.user,result,escape,button,field,area,select,bind,modal,notify,back:()=>{showProjectSheet("Overview")}}),
     Learning: learningView,
     Files: filesView,
     Activity: activityView,
     History: historyView,
   })[view]?.();
-  const openSheet=next=>{tab=Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next;renderProject()};
-  detachSheet=mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editTask,editPolicy:editAiPolicy});
+  const openSheet=next=>showProjectSheet(Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next);
+  let detachView = () => {};
+  detachSheet = () => { detachView(); shell.dispose(); };
+  if (view === "Bulletin") {
+    panel.innerHTML = skeleton("Loading bulletin");
+    const {mountBulletin} = await import("./portal/Bulletin.tsx");
+    if (!host.isConnected) return;
+    panel.replaceChildren();
+    detachView = mountBulletin(panel, {
+      project, viewer:session.user.id, leader:leader(), members:data.members, tasks:data.tasks,
+      open:showProjectSheet,
+      onCount:() => {
+        sessionStorage.removeItem(unreadKey);
+        if (host.isConnected) shell.update({unread:0});
+      },
+    });
+    return;
+  }
+  if (view === "Today" && data.portalReady) {
+    panel.innerHTML = skeleton("Loading today");
+    const {mountToday} = await import("./portal/Today.tsx");
+    if (!host.isConnected) return;
+    panel.replaceChildren();
+    detachView = mountToday(panel, {project, viewer:session.user.id, tasks:data.tasks,
+      posts:data.bulletin || [], week:data.bulletin_week || {}, open:showProjectSheet, edit:editTask});
+    return;
+  }
+  const {mountBlueprint} = await import("./blueprint.js");
+  if (!host.isConnected) return;
+  detachView = mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editTask,editPolicy:editAiPolicy,
+    mentorTask:new URL(location.href).searchParams.get("task"),
+    openTaskMentor:id=>{
+      const target=new URL(projectURL(project.id,"AI mentor"),location.href);
+      target.searchParams.set("task",id);
+      return navigate(target.href);
+    },
+    onUnread: unread => shell.update({unread})});
+  if (view === "Setup") {
+    const root = document.getElementById("shared-content");
+    const docs = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Rulebook and supporting files";
+    const body = document.createElement("div");
+    docs.append(summary, body);
+    root.append(docs);
+    filesView(body);
+  }
 
 }
 const content = (html) =>
@@ -1034,7 +1145,7 @@ function overviewView() {
         : "") +
       "</section></div>",
   );
-  bind("project-activity", () => { tab = "Activity"; renderProject(); });
+  bind("project-activity", () => { showProjectSheet("Activity"); });
   bind("edit-brief", () =>
     modal(
       "Edit project brief",
@@ -1151,17 +1262,20 @@ async function activityView() {
   content('<header class="shared-header"><div><h2>GitHub &amp; Vercel</h2><p>' +
     escape(project.repository || "Repository awaiting setup") + '</p></div>' +
     (leader() ? '<div class="shared-actions">' + button("edit-connections", "Connections") + button("vercel-token", "Vercel token") + "</div>" : "") +
-    '</header><div id="project-feed" aria-live="polite"></div>');
+    button("refresh-project-feed", "Refresh") + '</header><div id="project-feed" aria-live="polite"></div>');
   bind("vercel-token", vercelTokenSettings);
   bind("edit-connections", editConnections);
   const panel = document.getElementById("project-feed");
   const id = project.id;
   let refreshing = false;
+  const refreshButton = document.getElementById("refresh-project-feed");
   async function refresh() {
     if (!panel.isConnected || refreshing || document.hidden) return;
     refreshing = true;
+    refreshButton.disabled = true;
+    panel.setAttribute("aria-busy", "true");
     try {
-      const response = await fetch("/api/activity?project=" + encodeURIComponent(id), {headers:{Authorization:"Bearer " + session.access_token}});
+      const response = await fetch("/api/activity?project=" + encodeURIComponent(id), {headers:{Authorization:"Bearer " + session.access_token},signal:AbortSignal.timeout(20000)});
       const feed = await response.json();
       if (!response.ok) throw Error(feed.error || "Activity is temporarily unavailable.");
       if (!panel.isConnected) return;
@@ -1174,17 +1288,19 @@ async function activityView() {
         '</section></div><section class="bp-panel"><h3>Repository contributors</h3><p>Latest six commits · '+(feed.pullsAvailable?'up to 50 recently updated pull requests':'pull request data unavailable')+'</p>'+
         (feed.contributors||[]).map(c=>'<div class="bp-bar"><span>'+escape(c.login)+'</span><progress value="'+c.commits+'" max="6"></progress><b>'+c.commits+' commits</b></div><div class="bp-bar"><span>Pull requests</span><progress value="'+c.pulls+'" max="50"></progress><b>'+c.pulls+' PRs</b></div>').join("")+'</section><p class="shared-muted">Updated '  + escape(when(feed.updatedAt)) + '</p>';
     } catch (error) {
-      if (panel.isConnected) panel.innerHTML = errorBox(error);
+      if (panel.isConnected) {
+        panel.innerHTML = errorBox(error) + button("retry-project-feed", "Retry");
+        bind("retry-project-feed", refresh);
+      }
     } finally {
+      panel.removeAttribute("aria-busy");
+      refreshButton.disabled = false;
       refreshing = false;
     }
   }
-  panel.textContent = "Loading repository activity…";
+  panel.innerHTML = skeleton("Loading repository activity");
+  refreshButton.onclick = refresh;
   await refresh();
-  function schedule() {
-    if (panel.isConnected) setTimeout(async () => { await refresh(); schedule(); },60000);
-  }
-  schedule();
 }
 
 function editAiPolicy() {
@@ -1261,17 +1377,62 @@ function editAiPolicy() {
   );
 }
 function requirementsView() {
+  const coverage = new Map();
+  for (const task of data.tasks) {
+    if (!task.requirement_id) continue;
+    if (!coverage.has(task.requirement_id)) coverage.set(task.requirement_id, []);
+    coverage.get(task.requirement_id).push(task);
+  }
+  const sections = [
+    ["Judging criteria", data.rules?.judging_criteria, "requirements.judging_criteria"],
+    ["Submission restrictions", data.rules?.restrictions, "requirements.restrictions"],
+    ["Allowed AI tools", data.ai?.permitted_ai_tools, "ai.permitted_ai_tools"],
+    ["Prohibited AI tools", data.ai?.prohibited_ai_tools, "ai.prohibited_ai_tools"],
+  ].filter(([,items]) => items?.length);
+  const citation = (key, current) => {
+    const source = project.rulebook_sources?.[key];
+    // A later edit can change the published value independently of its initial citation.
+    const sameValue = source && JSON.stringify(source.value) === JSON.stringify(current);
+    if (!sameValue) return '<small class="portal-citation">Source · Project setup</small>';
+    return '<small class="portal-citation">' +
+      escape([source.name, source.page && "Page " + source.page, source.confidence].filter(Boolean).join(" · ")) +
+      (source.quote ? '<q>' + escape(source.quote) + '</q>' : '') + '</small>';
+  };
+  const policy = data.ai ? '<p>External AI APIs · ' +
+    (data.ai.external_ai_apis_allowed ? "Allowed by project policy" : "Disabled by project policy") +
+    '</p><small class="portal-citation">Source: project AI policy</small>' :
+    '<p>AI policy pending confirmation.</p>';
   content(
-    '<header class="shared-header"><h2>Requirements and evidence</h2>' +
+    '<header class="shared-header"><div><h2>Rules</h2><p class="portal-deadline">' + escape(deadlineLabel(project.submission_deadline)) + '</p>' +
+      (project.submission_deadline ? citation("project.submission_deadline",project.submission_deadline) : "") +
+      '<p>' + escape(project.problem_statement || project.description || "No project brief yet.") + '</p>' +
+      (project.problem_statement ? citation("project.problem_statement",project.problem_statement) : "") + '</div>'  +
       (leader() ? button("add-requirement", "Add requirement", true) : "") +
       "</header>" +
-      (data.rules?.mandatory_requirements.length
-        ? "<details><summary>Requirements entered during setup</summary><ul>" +
+      '<ol class="rules-flow" aria-label="Rules to submission workflow"><li>Review rules</li><li>' +
+      button("rules-to-board","Link tasks in Work") + '</li><li>' + button("rules-to-submit","Check readiness in Submit") + '</li></ol>' +
+      '<details open><summary>Judging, restrictions and AI policy</summary>' + policy +
+      sections.map(([title,items,key]) => '<h3>' + escape(title) + '</h3><ul>' +
+        items.map(item => '<li>' + escape(item) + '' + citation(key,items) + '</li>').join("") +
+        '</ul>').join("") + (leader() ? button("rules-edit-ai", "Edit AI policy") : "") + '</details>' +
+      (data.rules?.mandatory_requirements?.length
+        ? '<details class="official-rules" open><summary>Official requirements</summary><ul>' +
           data.rules.mandatory_requirements
-            .map((r) => "<li>" + escape(r) + "</li>")
+            .map((r) => "<li>" + escape(r) + citation("requirements.mandatory_requirements",data.rules.mandatory_requirements) + "</li>")
             .join("") +
           "</ul></details>"
         : "") +
+      (data.requirements.length ? '<section class="bp-panel"><h2>Task coverage</h2><ul class="studio-coverage">' +
+        data.requirements.map((r) => {
+          const linked = coverage.get(r.id) || [];
+          const done = linked.filter((task) => task.status === "done").length;
+          return '<li><div><strong>' + escape(r.title) + '</strong><p>' +
+            (linked.length ? done + ' of ' + linked.length + ' linked tasks done' : 'No linked task') +
+            '</p></div><span class="studio-chip ' + (linked.length ? (done === linked.length ? "ok" : "") : "warn") + '">' +
+            (linked.length ? (done === linked.length ? "Complete" : "In progress") : "Gap") + '</span>' +
+            (linked.length ? '<details><summary>Linked tasks</summary><ul>' + linked.map((task) => '<li>' +
+              escape(task.title) + '</li>').join("") + '</ul></details>' : '') + '</li>';
+        }).join("") + '</ul></section>' : '') +
       data.requirements
         .map(
           (r) =>
@@ -1340,24 +1501,42 @@ function requirementsView() {
         );
       },
     );
+  bind("rules-to-board",()=>showProjectSheet("Board"));
+  bind("rules-to-submit",()=>showProjectSheet("Ship check"));
+  bind("rules-edit-ai", editAiPolicy);
   bind("add-requirement", () => edit());
   for (const r of data.requirements) bind("req-" + r.id, () => edit(r));
 }
+function showInviteLink(token,title="Team invitation") {
+  const url = location.origin + "/shared#invite=" + encodeURIComponent(token);
+  document.getElementById("shared-title").textContent=title;
+  document.getElementById("shared-dialog-body").innerHTML=
+    '<p>Share this single-use link with one teammate. It expires in seven days.</p><label for="invite-url">Invitation link</label><input id="invite-url" readonly value="' +
+    escape(url) + '">' + button("copy-invite","Copy link",true);
+  if (!dialog.open) dialog.showModal();
+  bind("copy-invite",async()=>{await navigator.clipboard.writeText(url);notify("Invitation copied.");});
+}
 function teamView() {
-  const accepted = data.members.filter((m) => m.status === "accepted").length;
-  const complete = data.members.filter((m) => m.profile_completed_at).length;
+  const activeMembers = data.members.filter(member => member.status !== "removed");
+  const otherAccepted = activeMembers.filter(member => member.status === "accepted" && member.user_id !== session.user.id);
+  const accepted = activeMembers.filter((m) => m.status === "accepted").length;
+  const complete = activeMembers.filter((m) => m.profile_completed_at).length;
   content(
     '<header class="shared-header"><div><h2>Team</h2><p class="shared-muted">' +
       accepted +
       " of " +
-      data.members.length +
+      activeMembers.length +
       " joined · " +
       complete +
       ' profiles complete</p></div><div class="shared-actions">' +
       button("my-profile", "My profile") +
-      (leader() ? button("add-member", "Add teammate", true) : "") +
+      (leader() ? ("studio_intake_applied" in project ? button("quick-invite","Create invite link",true) +
+        button("add-member","Invite by email") : button("add-member","Add teammate",true)) :
+        data.portalReady ? button("leave-team", "Leave project") : "") +
       "</div></header>" +
-      data.members
+      (project.intake_roles?.length ? '<section class="bp-panel"><h3>Suggested team roles</h3><ul>' +
+        project.intake_roles.map(role=>'<li>'+escape(role)+'</li>').join("")+'</ul></section>' : "") +
+      activeMembers
         .map((m) => {
           const skills = data.skills.filter((s) => s.user_id === m.user_id);
           const availability = data.availability.find(
@@ -1377,6 +1556,8 @@ function teamView() {
               ? " · Profile complete"
               : " · Profile incomplete") +
             "</p>" +
+            (m.onboarding_role_suggestion ? '<p>Suggested role · ' + escape(m.onboarding_role_suggestion) + '</p>' : '') +
+            (m.preliminary_skills?.length ? '<p>Shared skills · ' + escape(m.preliminary_skills.join(", ")) + '</p>' : '') +
             (availability
               ? "<p>" +
                 availability.weekly_hours +
@@ -1413,6 +1594,9 @@ function teamView() {
                 "</small>"
               : "") +
             "</div>" +
+            (data.portalReady && leader() && m.status === "accepted" && !m.is_leader
+              ? '<div class="shared-actions">' + button("transfer-" + m.id,"Transfer leadership") +
+                button("remove-member-" + m.id,"Remove member") + '</div>' : "") +
             (leader() && m.status !== "accepted"
               ? '<div class="shared-actions">' +
                 button(
@@ -1444,6 +1628,41 @@ function teamView() {
         : ""),
   );
   bind("my-profile", editProfile);
+  bind("quick-invite",async()=>{
+    const token=await rpc("issue_studio_join_link",{p_project:project.id});
+    showInviteLink(token);
+    await loadProject();
+  });
+  const teamAction = (member, action, reassign) => rpc("portal_team_action", {
+    p_project:project.id, p_member:member, p_action:action, ...(reassign ? {p_reassign:reassign} : {}),
+  });
+  bind("leave-team", () => modal("Leave project",
+    '<p>Open tasks assigned to you will move to the project lead.</p>' + check("confirm","Leave this project"),
+    async form => {
+      if (!form.has("confirm")) throw Error("Confirm that you want to leave.");
+      await teamAction(session.user.id,"leave");
+      notify("You left the project.");
+    }, () => navigate("/shared"),
+  ));
+  for (const member of otherAccepted) {
+    bind("transfer-" + member.id, () => confirmAction("Transfer leadership",
+      member.full_name + " will manage the project, team, and submission.",
+      async () => {
+        await teamAction(member.user_id,"transfer");
+        notify("Leadership transferred.");
+      }));
+    bind("remove-member-" + member.id, () => modal("Remove " + member.full_name,
+      select("reassign", "Reassign open tasks to",
+        activeMembers.filter(candidate => candidate.status === "accepted" && candidate.id !== member.id)
+          .map(candidate => [candidate.user_id,candidate.full_name]), session.user.id) +
+      check("confirm","Remove this teammate"),
+      async form => {
+        if (!form.has("confirm")) throw Error("Confirm the removal.");
+        await teamAction(member.user_id,"remove",form.get("reassign"));
+        notify("Member removed and open tasks reassigned.");
+      },
+    ));
+  }
   bind("add-member", () =>
     modal(
       "Add teammate",
@@ -1466,21 +1685,7 @@ function teamView() {
         const token = await rpc("issue_member_invitation", {
           p_member_id: m.id,
         });
-        const url =
-          location.origin + "/shared#invite=" + encodeURIComponent(token);
-        document.getElementById("shared-title").textContent =
-          "Invitation for " + m.full_name;
-        document.getElementById("shared-dialog-body").innerHTML =
-          '<p>Expires in seven days. The recipient must sign in and confirm their identity.</p><p class="shared-note">The recipient also needs access to this private hosted site.</p><label for="invite-url">Invitation link</label><input id="invite-url" readonly value="' +
-          escape(url) +
-          '"><div class="shared-actions">' +
-          button("copy-invite", "Copy link") +
-          "</div>";
-        if (!dialog.open) dialog.showModal();
-        bind("copy-invite", async () => {
-          await navigator.clipboard.writeText(url);
-          notify("Invitation copied.");
-        });
+        showInviteLink(token,"Invitation for " + m.full_name);
         await loadProject();
       };
       if (
@@ -1539,7 +1744,7 @@ function teamView() {
   bind("finalize", () =>
     confirmAction(
       "Finalize onboarding",
-      complete < data.members.length || accepted < data.members.length
+      complete < activeMembers.length || accepted < activeMembers.length
         ? "Some teammates have pending invitations or incomplete profiles. Confirm that you want to proceed."
         : "All team members have completed their profiles.",
       () =>
@@ -1794,6 +1999,8 @@ function editTask(t) {
           ]),
           t?.status || "open",
         ) +
+        ("studio_intake_applied" in project ? select("priority","Priority",
+          [["urgent","Urgent"],["high","High"],["normal","Normal"],["low","Low"]],t?.priority || "normal") : "") +
         select(
           "requirement_id",
           "Linked requirement",
@@ -1819,11 +2026,8 @@ function editTask(t) {
           due_date: form.get("due_date") || null,
           estimated_hours: Number(form.get("estimated_hours")),
         };
-        await result(
-          t
-            ? db.from("project_tasks").update(values).eq("id", t.id)
-            : db.from("project_tasks").insert(values),
-        );
+        if (t) await updateTask(db, t, values);
+        else await result(db.from("project_tasks").insert(values));
       },
     );
 }
@@ -1892,8 +2096,8 @@ function learningView() {
       await loadProject();
     });
 }
-function filesView() {
-  content(
+function filesView(target = document.getElementById("shared-content")) {
+  target.innerHTML = (
     '<header class="shared-header"><h2>Project documents</h2></header>' +
       (leader()
         ? '<form id="file-form" class="shared-form">' +
@@ -1922,7 +2126,7 @@ function filesView() {
             button("file-" + d.id, "Download") +
             "</article>",
         )
-        .join(""),
+        .join("")
   );
   if (leader())
     document.getElementById("file-form").onsubmit = async (e) => {
@@ -1989,13 +2193,21 @@ function filesView() {
     });
 }
 function historyView() {
+  const labels = new Map([
+    ["team.member.joined", "Teammate joined"], ["projects.insert", "Project created"],
+    ["project_plans.insert", "Plan approved"], ["project_plans.update", "Plan revised"],
+    ["task.major.completed", "Major task complete"], ["report.closed", "Final report published"],
+    ["milestone.approved", "Timeline change approved"],
+  ]);
+  if (!("studio_intake_applied" in project)) labels.set("project_members.insert", "Teammate added");
+  const important = data.activity.filter(event => labels.has(event.event_type));
   content(
-    "<h2>Project history</h2>" +
-      data.activity
+    "<h2>Important activity</h2>" +
+      important
         .map(
           (event) =>
             '<article class="shared-row"><div><b>' +
-            escape(event.description) +
+            escape(labels.get(event.event_type) + (event.event_type === "task.major.completed" ? " · " + event.description : "")) +
             "</b><p>" +
             escape(memberName(event.actor_id)) +
             " · " +
@@ -2003,8 +2215,20 @@ function historyView() {
             "</p></div></article>",
         )
         .join("") +
-      (data.activity.length ? "" : empty("Project changes will appear here.")),
+      (important.length ? "" : empty("Project milestones and team changes will appear here.")) +
+    '<section><h3>Recent commits</h3><div id="history-commits" role="status">Loading commit history…</div></section>',
   );
+  const host=document.getElementById("history-commits");
+  const repository=project.repository;
+  if (!repository) {host.textContent="Connect GitHub to see commits.";return;}
+  fetch("/api/activity?project="+encodeURIComponent(project.id),{headers:{authorization:"Bearer "+session.access_token}})
+    .then(response=>{if(!response.ok) throw Error();return response.json();})
+    .then(feed=>{
+      if (!host.isConnected) return;
+      host.innerHTML=feed.commits.map(commit=>'<article class="shared-row"><div>' +
+        resourceLink("https://github.com/" + repository + "/commit/" + commit.sha,commit.message.split("\n")[0]) +
+        '<p>'+escape(commit.author+" · "+when(commit.date))+'</p></div></article>').join("") || empty("No commits to show.");
+    }).catch(()=>{if(host.isConnected)host.textContent="Commit history is temporarily unavailable.";});
 }
 const notificationPanel = notifications({
   db,
@@ -2013,10 +2237,8 @@ const notificationPanel = notifications({
   escape,
   when,
   notify,
-  openProject: async (record) => {
-    if (wizard && draftChanges > savedChanges) await queueDraft();
-    clearTimeout(saveTimer);
-    await openProject(record);
+  openProject: async (record, sheet) => {
+    await openProject(record, sheet);
   },
   getSession: () => session,
 });
