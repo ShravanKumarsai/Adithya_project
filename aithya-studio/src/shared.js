@@ -35,8 +35,19 @@ applyRouteTheme(new URL(location.href).searchParams.has("project"));
 const main = document.getElementById("shared-main");
 const dialog = document.getElementById("shared-dialog");
 const initialAuthURL = new URL(location.href);
+const initialAuthFragment = new URLSearchParams(initialAuthURL.hash.slice(1));
 const hasAuthCallback = initialAuthURL.searchParams.has("code") ||
-  new URLSearchParams(initialAuthURL.hash.slice(1)).has("access_token");
+  initialAuthFragment.has("access_token");
+const authErrorKeys = ["error", "error_code", "error_description"];
+const failedAuthParams = [initialAuthURL.searchParams, initialAuthFragment].find(params =>
+  params.has("error") || params.has("error_code"));
+let callbackFeedback = "";
+if (failedAuthParams) {
+  const code = failedAuthParams.get("error_code") || failedAuthParams.get("error");
+  if (code === "otp_expired") callbackFeedback = "This email link has expired. Request a new link and try again.";
+  else if (code === "access_denied") callbackFeedback = "Sign-in was canceled or access was denied. You can try again.";
+  else callbackFeedback = "Sign-in couldn’t finish. Try again, or use email and password.";
+}
 const field = (name, label, value = "", type = "text", required = false) =>
   '<label for="f-' +
   name +
@@ -244,12 +255,15 @@ function authScreen() {
     '<button class="button subtle">' + submitLabel + '</button></form>' +
     '<div class="shared-actions">' + (login ? button("auth-signup", "Create an account") + button("auth-reset", "Forgot password?") :
       recovery ? "" : button("auth-login", "Back to sign in")) +
-    '</div><div id="auth-error" role="alert"></div></section>';
+    '</div><div id="auth-error" role="alert">' +
+    (login && callbackFeedback ? '<p class="shared-error">' + escape(callbackFeedback) + '</p>' : '') + '</div></section>';
   const passwordInput = document.getElementById("f-password");
   if (passwordInput) passwordInput.autocomplete = signup || recovery ? "new-password" : "current-password";
   const emailInput = document.getElementById("f-email");
   if (emailInput) emailInput.autocomplete = "email";
   bind("google-login", async () => {
+    callbackFeedback = "";
+    document.getElementById("auth-error").textContent = "";
     const {error} = await db.auth.signInWithOAuth({provider:"google",options:{redirectTo:authReturnURL().href}});
     if (error) document.getElementById("auth-error").innerHTML = errorBox(error);
   });
@@ -263,6 +277,8 @@ function authScreen() {
     const email=String(form.get("email")||"").trim().toLowerCase();
     const password=String(form.get("password")||"");
     const destination = authReturnURL();
+    callbackFeedback = "";
+    document.getElementById("auth-error").textContent = "";
     try {
       if (recovery) {
         if (password.length<10) throw Error("Use at least 10 characters.");
@@ -2358,5 +2374,15 @@ db.auth.onAuthStateChange((event, next) => {
 });
 const initial = await db.auth.getSession();
 session = initial.data.session;
-if (initial.error) notify(initial.error.message);
+if (failedAuthParams) {
+  // Keep provider diagnostics and authorization codes out of the page and address bar.
+  const current = new URL(location.href);
+  const fragment = new URLSearchParams(current.hash.slice(1));
+  for (const key of authErrorKeys) {
+    current.searchParams.delete(key);
+    fragment.delete(key);
+  }
+  current.hash = fragment.toString();
+  history.replaceState(history.state, "", current);
+} else if (initial.error) notify("Could not restore your session. Please sign in again.");
 if (!session) authScreen();

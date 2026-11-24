@@ -405,6 +405,21 @@ const app = createServer(async (req, res) => {
       } finally { await visitor.close(); }
     }
     assert.equal(profileReads,0,"Sign-in must open the dashboard before optional profile setup");
+    const visitor = await browser.newPage();
+    try {
+      await visitor.route("https://ekqfotmlnqqrbcizjtfz.supabase.co/**",mockSupabase);
+      for (const separator of ["#","?"]) {
+        const details = new URLSearchParams({error:"server_error",error_code:"unexpected_failure",
+          error_description:"Unable to exchange external code: example-provider-detail"});
+        await visitor.goto(origin + "/shared" + separator + details);
+        await visitor.getByRole("alert").filter({hasText:"Sign-in couldn’t finish"}).waitFor();
+        assert.equal(visitor.url(),origin + "/shared");
+        assert.equal(await visitor.getByText("example-provider-detail",{exact:false}).count(),0);
+        await visitor.getByRole("button",{name:"Continue with Google"}).waitFor();
+      }
+      await visitor.getByRole("button",{name:"Continue with Google"}).click();
+      await visitor.getByRole("heading",{name:"Shared projects"}).waitFor();
+    } finally { await visitor.close(); }
     await page.goto(origin + "/shared");
     const directory = page.getByRole("heading", {name:"Shared projects"});
     await directory.waitFor();
