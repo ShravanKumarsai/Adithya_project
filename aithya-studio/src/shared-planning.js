@@ -265,33 +265,76 @@ export async function renderPlanning({
         if (!open()) return;
         status.textContent = "Draft ready for review.";
         const preview = view.querySelector("#planning-preview");
+        const plan = structuredClone(draft.plan);
         preview.innerHTML =
-          '<section class="shared-note"><h3>Review generated draft</h3>' +
-          planMarkup(draft.plan, escape) +
-          '<button type="button" class="button primary" id="save-generated">' +
-          (saved ? "Replace saved plan" : "Save to project") +
-          "</button></section>";
-        preview.querySelector("#save-generated").onclick = async (event) => {
-          const save = event.currentTarget;
-          save.disabled = true;
+          '<section class="shared-note"><h3>Proposed plan</h3>' +
+          '<p class="portal-citation">Source: project brief and approved requirements. Verify estimates and sequencing before approving.</p>' +
+          '<div id="plan-proposal"></div><div class="shared-actions">' +
+          '<button type="button" class="button primary" id="save-generated">Accept plan</button>' +
+          '<button type="button" class="button subtle" id="edit-generated">Edit draft</button>' +
+          '<button type="button" class="button subtle" id="dismiss-generated">Dismiss</button>' +
+          '</div><p role="status" id="plan-proposal-status"></p></section>';
+        const proposal = preview.querySelector("#plan-proposal");
+        const feedback = preview.querySelector("#plan-proposal-status");
+        const approve = preview.querySelector("#save-generated");
+        const edit = preview.querySelector("#edit-generated");
+        const dismiss = preview.querySelector("#dismiss-generated");
+        proposal.innerHTML = planMarkup(plan, escape);
+        dismiss.onclick = () => { preview.replaceChildren(); status.textContent = "Draft dismissed."; };
+        edit.onclick = () => {
+          const form = document.createElement("form");
+          form.className = "shared-form";
+          form.innerHTML = '<label>Plan summary<textarea maxlength="1200" required>' + escape(plan.summary) + '</textarea></label>' +
+            plan.phases.map(phase => '<label>' + escape(phase.title) +
+              '<textarea maxlength="1600">' + escape(phase.tasks.join("\n")) + '</textarea></label>').join("") +
+            '<button class="button subtle">Apply edits to draft</button>';
+          proposal.replaceChildren(form);
+          edit.disabled = approve.disabled = true;
+          form.onsubmit = event => {
+            event.preventDefault();
+            const [summary, ...tasks] = [...form.querySelectorAll("textarea")];
+            plan.summary = summary.value.trim();
+            plan.phases.forEach((phase, index) => {
+              phase.tasks = tasks[index].value.split("\n").map(task => task.trim().slice(0,200)).filter(Boolean).slice(0,8);
+            });
+            proposal.innerHTML = planMarkup(plan, escape);
+            edit.disabled = approve.disabled = false;
+          };
+        };
+        approve.onclick = async () => {
+          approve.disabled = edit.disabled = dismiss.disabled = true;
+          feedback.textContent = "Saving plan…";
+          const row = {project_id:project.id, plan, model:draft.model};
           try {
-            await result(
-              db
-                .from("project_plans")
-                .upsert({
-                  project_id: project.id,
-                  plan: draft.plan,
-                  model: draft.model,
-                })
-                .select("updated_at")
-                .single(),
-            );
+            const write = saved ?
+              db.from("project_plans").update(row).eq("project_id",project.id).eq("updated_at",saved.updated_at) :
+              db.from("project_plans").insert(row);
+            const committed = await result(write.select("updated_at").maybeSingle());
+            if (!committed) throw Error("The saved plan changed. Reopen planning before approving.");
             if (!open()) return;
-            await redraw();
-            notify("Plan saved for the team.");
+            status.textContent = "Plan approved.";
+            preview.innerHTML = '<div class="shared-actions"><p role="status">Plan saved for the team.</p>' +
+              '<button type="button" class="button subtle" id="undo-plan">Undo</button></div>';
+            const undo = preview.querySelector("#undo-plan");
+            const timer = setTimeout(() => { if (open()) void redraw(); }, 10000);
+            undo.onclick = async () => {
+              clearTimeout(timer);
+              undo.disabled = true;
+              try {
+                const table = db.from("project_plans");
+                const revert = saved ? table.update({plan:saved.plan, model:saved.model}) : table.delete();
+                const restored = await result(revert.eq("project_id",project.id)
+                  .eq("updated_at",committed.updated_at).select("project_id").maybeSingle());
+                if (!restored) throw Error("Plan changed since approval.");
+                notify("Plan approval undone.");
+              } catch (error) {
+                notify(error.message);
+              }
+              if (open()) await redraw();
+            };
           } catch (error) {
-            notify(error.message);
-            save.disabled = false;
+            feedback.textContent = error.message;
+            approve.disabled = edit.disabled = dismiss.disabled = false;
           }
         };
       } catch (error) {

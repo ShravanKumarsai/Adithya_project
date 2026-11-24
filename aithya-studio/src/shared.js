@@ -1,8 +1,10 @@
-import { button, escape, skeleton, tabButton, tabKeys } from "./studio-ui.js";
+import { updateTask } from "./portal/status.js";
+import { deadlineLabel, sections } from "./portal/routes.js";
+import { updateProjectStatus } from "./portal/status.js";
+import { button, escape, skeleton } from "./studio-ui.js";
 import { collectWizardPolicy } from "./wizard-policy.js";
 import {applyStudioAppearance,studioAppearance} from "./studio-appearance.js";
 import {mountReport} from "./studio-report.js";
-import {mountBlueprint} from "./blueprint.js";
 import {studioSkills} from "./assist-contract.js";
 import { todayView } from "./project-insights.js";
 import { openRulebookImport } from "./shared-rulebook.js";
@@ -15,8 +17,17 @@ let detachSheet=()=>{};
 const themeButton=document.querySelector("#blueprint-theme");
 const themes=["dark","light","blueprint","system"];
 const nextTheme=theme=>themes[(themes.indexOf(theme)+1)%themes.length];
+function loadLegacyFonts() {
+  if (document.getElementById("studio-legacy-fonts")) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.id = "studio-legacy-fonts";
+  link.href = "https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Special+Elite&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Mono:wght@700&display=swap";
+  document.head.append(link);
+}
 function setTheme(theme){
   applyStudioAppearance({...studioAppearance(),theme});
+  if (theme === "blueprint") loadLegacyFonts();
   themeButton.textContent="Use "+(nextTheme(theme)==="dark"?"Midnight":nextTheme(theme))+" theme";
 }
 applyStudioAppearance();
@@ -108,15 +119,31 @@ const status = (label, complete) =>
 const empty = (label) => '<p class="shared-muted">' + escape(label) + "</p>";
 let session,
   project,
-  tab = "Overview",
+  tab = "Today",
   data = {},
   authMode = "login",
   generation = 0,
   wizard = null;
-let saveQueue = Promise.resolve(),
-  saveTimer;
-let draftChanges = 0,
-  savedChanges = 0;
+const wizardKey = () => "drafdeck.setup." + session?.user.id;
+function tabDraft() {
+  try {
+    return JSON.parse(sessionStorage.getItem(wizardKey()) || "null");
+  } catch {
+    return null;
+  }
+}
+function rememberDraft() {
+  try {
+    sessionStorage.setItem(wizardKey(), JSON.stringify(wizard));
+    document.getElementById("draft-state").textContent = "Kept in this tab";
+  } catch {
+    document.getElementById("draft-state").textContent = "Keep this tab open to retain your edits";
+  }
+}
+function discardDraft() {
+  sessionStorage.removeItem(wizardKey());
+  wizard = null;
+}
 const pendingToken = new URLSearchParams(location.hash.slice(1)).get("invite");
 if (pendingToken) {
   sessionStorage.setItem("aithya.shared.invite", pendingToken);
@@ -201,7 +228,7 @@ function authScreen() {
   main.innerHTML =
     '<section class="auth-panel"><h1>' +
     titles[authMode] +
-    '</h1><p class="shared-muted">One Aithya account for all your team projects.</p><form id="auth-form" class="shared-form">' +
+    '</h1><p class="shared-muted">One Drafdeck account for all your team projects.</p><form id="auth-form" class="shared-form">' +
     (authMode === "register"
       ? field("name", "Full name", "", "text", true)
       : "") +
@@ -238,7 +265,7 @@ function authScreen() {
     e.preventDefault();
     e.submitter.disabled = true;
     const form = new FormData(e.currentTarget),
-      email = String(form.get("email") || "").trim(),
+      email = String(form.get("email") || "").trim().toLowerCase(),
       password = String(form.get("password") || "");
     try {
       if (["register", "recover"].includes(authMode) && password.length < 10)
@@ -300,6 +327,7 @@ async function workspace() {
     else link.removeAttribute("aria-current");
   }
   bind("signout", async () => {
+    discardDraft();
     await result(db.auth.signOut());
   });
   if (!session) {
@@ -343,7 +371,7 @@ async function workspace() {
         }).join("") || '<p>No projects yet.</p>') + '</section>';
       return;
     }
-    const [projects, drafts, totals] = await Promise.all([
+    const [projects, serverDrafts, totals] = await Promise.all([
       result(
         db
           .from("projects")
@@ -362,7 +390,7 @@ async function workspace() {
     if (version !== generation) return;
     if (insights) {
       const [tasks, events] = await Promise.all([
-        result(db.from("project_tasks").select("id,project_id,title,status,due_date").eq("owner_id",session.user.id)
+        result(db.from("project_tasks").select("*").eq("owner_id",session.user.id)
           .neq("status","done").order("due_date",{nullsFirst:false}).limit(80)),
         rpc("project_notification_feed").catch(() => []),
       ]);
@@ -374,7 +402,7 @@ async function workspace() {
       for (const control of main.querySelectorAll("[data-today-task]")) control.onchange = async () => {
         control.disabled = true;
         try {
-          await result(db.from("project_tasks").update({status:control.value}).eq("id",control.dataset.todayTask).select("id").single());
+          await updateTask(db, tasks.find(task => task.id === control.dataset.todayTask), {status:control.value});
           notify("Task updated.");
           await workspace();
         } catch (error) {
@@ -388,10 +416,12 @@ async function workspace() {
     const requested = new URLSearchParams(location.search).get("project");
     if (requested) {
       const match = projects.find(p => p.id === requested);
-      if (match) return openProject(match, route.searchParams.get("sheet") || "Overview", false);
+      if (match) return openProject(match, route.searchParams.get("sheet") || "Today", false);
       history.replaceState(null, "", "/shared");
       notify("This project is unavailable for this account.");
     }
+    const pending = tabDraft();
+    const drafts = pending ? [pending, ...serverDrafts.filter(d => d.id !== pending.id)] : serverDrafts;
     main.innerHTML =
       '<header class="shared-header"><div><h1>Shared projects</h1><p class="shared-muted">Your team work, drafts, and next steps.</p></div>' +
       '<div class="shared-actions">' +
@@ -405,8 +435,8 @@ async function workspace() {
               (d) =>
                 '<div class="project-entry"><div><b>' +
                 escape(d.content.project?.name || "Untitled draft") +
-                "</b><p>Saved " +
-                when(d.updated_at) +
+                "</b><p>" +
+                (d.updated_at ? "Saved " + when(d.updated_at) : "In this tab") +
                 "</p></div>" +
                 button("draft-" + d.id, "Resume") +
                 "</div>",
@@ -530,8 +560,6 @@ const projectFields = [
   ["workflow_content", "Existing workflow"],
 ];
 function openWizard(draft) {
-  draftChanges = 0;
-  savedChanges = 0;
   wizard = draft
     ? structuredClone(draft)
     : {
@@ -546,6 +574,7 @@ function openWizard(draft) {
         },
       };
   renderWizard();
+  rememberDraft();
 }
 function renderWizard() {
   const content = wizard.content;
@@ -641,7 +670,7 @@ function renderWizard() {
     : group("Project brief",briefFields,true) + group("Rules and judging",ruleFields) + group("AI policy",policyFields);
   main.innerHTML =
     '<header class="shared-header"><h1>Project setup</h1>' +
-    button("close-wizard", "Back to projects") +
+    button("close-wizard", "Cancel setup") +
     '</header><nav class="wizard-steps">' +
     ["Source", "Review"]
       .map(
@@ -657,8 +686,7 @@ function renderWizard() {
       .join("") +
     '</nav><form id="wizard-form" class="shared-form"><div class="shared-columns"><section>' +
     fields +
-    '</section><section class="draft-info"><h3>Draft</h3><p id="draft-state" role="status">Draft ready</p><p class="shared-muted">Private until you create the project.</p></section></div><div id="wizard-error" role="alert"></div><div class="shared-actions">' +
-    (step ? button("save-draft", "Save draft") : "") +
+    '</section><section class="draft-info"><h3>Draft</h3><p id="draft-state" role="status">Kept in this tab</p><p class="shared-muted">Review before creating the project.</p></section></div><div id="wizard-error" role="alert"></div><div class="shared-actions">' +
     button("wizard-next", step ? "Create project" : "Enter details manually", step === 1) +
     '</div></form>';
   const form = document.getElementById("wizard-form");
@@ -680,42 +708,28 @@ function renderWizard() {
     onApply: async (labels) => {
       if (!content.project?.name && content.project?.hackathon_name)
         content.project.name = content.project.hackathon_name.slice(0,120);
-      draftChanges++;
       content.step = 1;
       renderWizard();
-      try {
-        await queueDraft();
-        notify("Imported " + labels.length + " fields. Review them before creating the project.");
-      } catch (error) {
-        notify(error.message);
-      }
+      rememberDraft();
+      notify("Imported " + labels.length + " fields. Review before creating the project.");
       document.getElementById("f-name")?.focus();
     },
   });
   form.addEventListener("input", () => {
     collect();
-    draftChanges++;
-    clearTimeout(saveTimer);
-    document.getElementById("draft-state").textContent = "Unsaved changes…";
-    saveTimer = setTimeout(() => queueDraft().catch(() => {}), 700);
+    rememberDraft();
   });
-  async function move(next) {
+  function move(next) {
     if (step === next) return;
     collect();
     content.step = next;
-    draftChanges++;
-    await queueDraft();
     renderWizard();
+    rememberDraft();
     document.getElementById("step-" + next)?.focus();
   }
   for (let i = 0; i < 2; i++) bind("step-" + i, () => move(i));
-  bind("save-draft", () => {
-    collect();
-    return queueDraft();
-  });
   bind("close-wizard", async () => {
-    collect();
-    await queueDraft();
+    discardDraft();
     await workspace();
   });
   bind("wizard-next", async () => {
@@ -737,57 +751,42 @@ function renderWizard() {
       validation.textContent = error;
       return;
     }
-    await queueDraft();
-    const id = await rpc("publish_project_draft", { p_id: wizard.id });
-    notify("Project created. Add your teammates and complete your profile.");
-    const pRecord = await result(
-      db.from("projects").select("*").eq("id", id).single(),
-    );
-    await openProject(pRecord);
+    const pending = wizard;
+    document.getElementById("draft-state").textContent = "Creating project…";
+    try {
+      let id;
+      const response = await db.rpc("approve_portal_project", {
+        p_id: pending.id, p_content: pending.content, p_revision: pending.revision,
+      });
+      if (response.error?.code === "PGRST202") {
+        // The older schema still requires two calls. Both happen after approval.
+        const saved = await rpc("save_project_draft", {
+          p_id: pending.id, p_content: pending.content, p_revision: pending.revision,
+        });
+        pending.revision = saved.revision;
+        rememberDraft();
+        id = await rpc("publish_project_draft", { p_id: pending.id });
+      } else {
+        if (response.error) throw response.error;
+        id = response.data;
+      }
+      if (wizard !== pending) return;
+      discardDraft();
+      notify("Project created. Add teammates when you’re ready.");
+      const record = await result(db.from("projects").select("*").eq("id", id).single());
+      await openProject(record, "Project setup");
+    } catch (error) {
+      if (wizard === pending) {
+        document.getElementById("draft-state").textContent = "Draft retained";
+        validation.textContent = error.message;
+      }
+    }
   });
 }
-function queueDraft() {
-  clearTimeout(saveTimer);
-  const target = wizard;
-  const snapshot = structuredClone(target.content);
-  const capturedChanges = draftChanges;
-  saveQueue = saveQueue
-    .catch(() => {})
-    .then(async () => {
-      try {
-        const saved = await rpc("save_project_draft", {
-          p_id: target.id,
-          p_content: snapshot,
-          p_revision: target.revision,
-        });
-        target.revision = saved.revision;
-        const label = document.getElementById("draft-state");
-        if (wizard === target) {
-          savedChanges = capturedChanges;
-          if (label)
-            label.textContent =
-              savedChanges === draftChanges
-                ? "Saved to your account"
-                : "Unsaved changes…";
-        }
-      } catch (err) {
-        const label = document.getElementById("draft-state");
-        if (label && wizard === target) label.textContent = err.message;
-        throw err;
-      }
-    });
-  return saveQueue;
-}
-window.addEventListener("beforeunload", (e) => {
-  if (wizard && savedChanges < draftChanges) {
-    e.preventDefault();
-    e.returnValue = "";
-  }
-});
 function projectURL(id, sheet) {
   return "/shared?" + new URLSearchParams({project: id, sheet});
 }
-async function openProject(record, sheet = "Overview", updateRoute = true) {
+async function openProject(record, sheet = "Today", updateRoute = true) {
   if (updateRoute) history.pushState(null, "", projectURL(record.id, sheet));
   document.getElementById("studio-global-nav").querySelectorAll("[aria-current]").forEach((link) => link.removeAttribute("aria-current"));
   document.querySelector('#studio-global-nav a[href="/shared"]').setAttribute("aria-current","page");
@@ -797,8 +796,6 @@ async function openProject(record, sheet = "Overview", updateRoute = true) {
   await loadProject();
 }
 async function navigate(path) {
-  if (wizard && draftChanges > savedChanges) await queueDraft();
-  clearTimeout(saveTimer);
   const destination = new URL(path, location.href);
   if (destination.href !== location.href) history.pushState(null, "", destination);
   await workspace();
@@ -812,8 +809,6 @@ document.addEventListener("click", (event) => {
 });
 window.addEventListener("popstate", async () => {
   try {
-    if (wizard && draftChanges > savedChanges) await queueDraft();
-    clearTimeout(saveTimer);
     await workspace();
   } catch (error) {
     notify(error.message);
@@ -892,6 +887,16 @@ async function loadProject() {
     id = project.id;
   main.innerHTML = skeleton("Loading project records");
   try {
+    const snapshot = await db.rpc("portal_project_snapshot", {p_id:id});
+    if (version !== generation) return;
+    if (!snapshot.error) {
+      if (!snapshot.data?.project) throw Error("This project is unavailable for this account.");
+      data = snapshot.data;
+      project = data.project;
+      await renderProject();
+      return;
+    }
+    if (snapshot.error.code !== "PGRST202") throw snapshot.error;
     const queries = [
       ["milestones", db.from("milestones").select("*").eq("project_id", id).order("due")],
       ["project", db.from("projects").select("*").eq("id", id).single()],
@@ -982,7 +987,7 @@ async function loadProject() {
     if (version !== generation) return;
     data = {...Object.fromEntries(entries), personalReady:!schemaProbe.error};
     project = data.project;
-    renderProject();
+    await renderProject();
   } catch (err) {
     if (version === generation) {
       main.innerHTML =
@@ -995,61 +1000,32 @@ async function loadProject() {
 const leader = () => project?.leader_id === session?.user.id;
 const memberName = (id) =>
   data.members.find((m) => m.user_id === id)?.full_name || "Unassigned";
-const projectGroups = {
-  Overview:["Overview","My dashboard","Today","AI mentor","Report","Portfolio","Ship check"],
-  Plan:["Planning board","AI plan","Timeline","Learning","Project setup"],
-  Team:["Team","Chats","Register"],
-  Work:["Board","AI credits","Settings"],
-  Activity:["Activity","Files","History"],
-};
 function showProjectSheet(next) {
+  if (tab === next) return;
   tab = next;
-  history.replaceState(null, "", projectURL(project.id, tab));
-  renderProject();
+  history.pushState(null, "", projectURL(project.id, tab));
+  void renderProject().catch(error => notify(error.message));
 }
-function renderProject() {
+async function renderProject() {
   detachSheet();
-  const labels=["Overview","My dashboard","Today","Chats","Board","Planning board","Activity","AI credits","Team","Timeline","Learning","Project setup","AI mentor","Ship check","Report","Portfolio","Register","Settings","Files","History","AI plan"];
-  const tabs=data.personalReady?labels:labels.filter(t=>!["My dashboard","AI credits","Register","Settings"].includes(t));
-  if(!tabs.includes(tab))tab="Overview";
-  const activeGroup = Object.keys(projectGroups).find(group => projectGroups[group].includes(tab));
-  const sections = projectGroups[activeGroup].filter(sheet => tabs.includes(sheet));
-  const viewAliases={"Project setup":"Setup",Chats:"Chat","AI mentor":"Mentor","Ship check":"Ship","Planning board":"Planning"};
-  const view=viewAliases[tab]||tab;
-  const stageSheets={Idea:"Project setup",Plan:"Planning board",Team:"Team",Build:"Board",Learn:"Learning",Ship:"Ship check"};
-  const stage=({Setup:"Idea",Planning:"Plan",Team:"Team",Chat:"Team",Board:"Build",Learning:"Learn",Ship:"Ship"})[view];
-  const days=project.submission_deadline?Math.max(0,Math.ceil((Date.parse(project.submission_deadline+"T23:59:59")-Date.now())/86400000)):null;
-  const icons=["M2 2h5v5H2zm9 0h5v5h-5zM2 11h5v5H2zm9 0h5v5h-5z","M9 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-6 7c0-5 12-5 12 0","M9 2v14M2 9h14M4 4l10 10m0-10L4 14","M2 3h14v10H7l-5 3z","M2 3h14v12H2zm5 0v12m4-12v12","M9 2v14M2 9h14","M4 4v10m0-5 10-5m-10 10 10-5","M2 13a7 7 0 0 1 14 0M9 12l4-4","M5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-4 7c0-5 8-5 8 0M11 4c5-1 6 4 2 5m-1 2c3 0 5 2 5 5","M9 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 3v4l3 2","M2 3h6l1 2 1-2h6v11h-6l-1 2-1-2H2z","M3 15l1-4 9-9 3 3-9 9z","M9 1v16M1 9h16M3 3l12 12m0-12L3 15","M2 9l5 5 9-11","M2 3h14v13H2zm3 9V8m4 4V6m4 6V9","M2 5h14v11H2zm4 0V2h6v3","M9 2v14M2 9h14","M9 1v4m0 8v4M1 9h4m8 0h4M9 5a4 4 0 1 0 .01 0z"];
-  const icon=t=>icons[labels.indexOf(t)] ? '<svg class="studio-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="'+icons[labels.indexOf(t)]+'"/></svg>' : "";
-  const tabId = (sheet) => "tab-" + (viewAliases[sheet] || sheet.replaceAll(" ","-"));
-  main.innerHTML='<div class="bp-layout final-layout"><div class="studio-project-body">'+
-    '<header class="project-masthead studio-title-block"><div><h1>'+escape(project.name)+'</h1><p>'+escape([project.hackathon_name||project.theme,days!==null?days+" days left":""].filter(Boolean).join(" · "))+'</p></div>'+
-    '<nav class="bp-steps" aria-label="Project stages">'+Object.keys(stageSheets).map(name=>'<button type="button" id="stage-'+name+'"'+(stage===name?' aria-current="step"':'')+'>'+name+'</button>').join('')+'</nav><div class="studio-project-due"><small>Due</small><strong>'+escape(project.submission_deadline||"Unscheduled")+'</strong></div></header>'+
-    '<div class="studio-primary-tabs" role="tablist" aria-label="Project areas">' +
-    Object.keys(projectGroups).map(group => tabButton("area-"+group,group,group===activeGroup,"project-area")).join("") +
-    '</div><section id="project-area" role="tabpanel" aria-labelledby="area-' + activeGroup + '">' +
-    '<div class="shared-tabs" role="tablist" aria-label="' + activeGroup + ' sections">' +
-    sections.map(sheet => tabButton(tabId(sheet),sheet,sheet===tab,"shared-content",icon(sheet))).join("") +
-    '</div><div id="shared-content" class="shared-content" role="tabpanel" tabindex="0" aria-labelledby="' + tabId(tab) + '"></div></section></div></div>';
-  for (const list of main.querySelectorAll('[role="tablist"]')) tabKeys(list);
-  bind("back-projects", () => navigate("/shared"));
-  bind("refresh-shared", loadProject);
-  for (const [name,sheet] of Object.entries(stageSheets)) {
-    bind("stage-"+name,() => {
-      showProjectSheet(sheet);
-      document.getElementById("stage-"+name)?.focus();
-    });
-  }
-  for (const [group, sheets] of Object.entries(projectGroups)) {
-    bind("area-"+group, () => {
-      if (group !== activeGroup) showProjectSheet(sheets[0]);
-      document.getElementById("area-"+group)?.focus();
-    });
-  }
-  for (const sheet of sections) bind(tabId(sheet), () => {
-    if (sheet !== tab) showProjectSheet(sheet);
-    document.getElementById(tabId(sheet))?.focus();
-  });
+  const labels = [...Object.values(sections).flat(), "Settings", "AI credits"];
+  const tabs = data.personalReady ? labels : labels.filter(t => !["My dashboard", "AI credits", "Register", "Settings"].includes(t));
+  if (!tabs.includes(tab)) tab = "Today";
+  const viewAliases = {"Project setup":"Setup", Chats:"Chat", "AI mentor":"Mentor", "Ship check":"Ship", "Planning board":"Planning"};
+  const view = viewAliases[tab] || tab;
+  if (view === "Planning") loadLegacyFonts();
+  main.innerHTML = '<div id="portal-project-head"></div><div id="shared-content" class="portal-shell portal-content shared-content" tabindex="-1"></div>';
+  const host = document.getElementById("portal-project-head");
+  const panel = document.getElementById("shared-content");
+  panel.innerHTML = skeleton("Loading project view");
+  const {mountProjectShell} = await import("./portal/ProjectShell.tsx");
+  if (!host.isConnected) return;
+  panel.replaceChildren();
+  const shell = mountProjectShell(host, { project, sheet:tab, available:tabs, open:showProjectSheet });
+  const unreadKey = "chat-count-" + session.user.id + project.id;
+  if (view === "Chat") sessionStorage.removeItem(unreadKey);
+  shell.update({unread:Number(sessionStorage.getItem(unreadKey) || 0)});
+  void updateProjectStatus(project, session, shell, tab, () => host.isConnected);
   ({
     Overview: overviewView,
     Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,escape,leader:leader()},document.getElementById("shared-content")),
@@ -1065,7 +1041,46 @@ function renderProject() {
     History: historyView,
   })[view]?.();
   const openSheet=next=>showProjectSheet(Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next);
-  detachSheet=mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editTask,editPolicy:editAiPolicy});
+  let detachView = () => {};
+  detachSheet = () => { detachView(); shell.dispose(); };
+  if (view === "Bulletin") {
+    panel.innerHTML = skeleton("Loading bulletin");
+    const {mountBulletin} = await import("./portal/Bulletin.tsx");
+    if (!host.isConnected) return;
+    panel.replaceChildren();
+    detachView = mountBulletin(panel, {
+      project, viewer:session.user.id, leader:leader(), members:data.members, tasks:data.tasks,
+      open:showProjectSheet,
+      onCount:() => {
+        sessionStorage.removeItem(unreadKey);
+        if (host.isConnected) shell.update({unread:0});
+      },
+    });
+    return;
+  }
+  if (view === "Today" && data.portalReady) {
+    panel.innerHTML = skeleton("Loading today");
+    const {mountToday} = await import("./portal/Today.tsx");
+    if (!host.isConnected) return;
+    panel.replaceChildren();
+    detachView = mountToday(panel, {project, viewer:session.user.id, tasks:data.tasks,
+      posts:data.bulletin || [], open:showProjectSheet, edit:editTask});
+    return;
+  }
+  const {mountBlueprint} = await import("./blueprint.js");
+  if (!host.isConnected) return;
+  detachView = mountBlueprint({project,data,tab:view,db,result,rpc,session,leader:leader(),modal,notify,refresh:loadProject,openSheet,editConnections,editProfile,editTask,editPolicy:editAiPolicy,
+    onUnread: unread => shell.update({unread})});
+  if (view === "Setup") {
+    const root = document.getElementById("shared-content");
+    const docs = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Rulebook and supporting files";
+    const body = document.createElement("div");
+    docs.append(summary, body);
+    root.append(docs);
+    filesView(body);
+  }
 
 }
 const content = (html) =>
@@ -1375,10 +1390,24 @@ function requirementsView() {
     if (!coverage.has(task.requirement_id)) coverage.set(task.requirement_id, []);
     coverage.get(task.requirement_id).push(task);
   }
+  const sections = [
+    ["Judging criteria", data.rules?.judging_criteria],
+    ["Submission restrictions", data.rules?.restrictions],
+    ["Allowed AI tools", data.ai?.permitted_ai_tools],
+    ["Prohibited AI tools", data.ai?.prohibited_ai_tools],
+  ].filter(([,items]) => items?.length);
+  const policy = data.ai ? '<p>External AI APIs · ' +
+    (data.ai.external_ai_apis_allowed ? "Allowed by project policy" : "Disabled by project policy") +
+    '</p><small class="portal-citation">Source: project AI policy</small>' :
+    '<p>AI policy pending confirmation.</p>';
   content(
-    '<header class="shared-header"><h2>Requirements and evidence</h2>' +
+    '<header class="shared-header"><div><h2>Rules</h2><p class="portal-deadline">' + escape(deadlineLabel(project.submission_deadline)) + '</p><p>' + escape(project.problem_statement || project.description || "No project brief yet.") + '</p></div>' +
       (leader() ? button("add-requirement", "Add requirement", true) : "") +
       "</header>" +
+      '<details><summary>Judging, restrictions and AI policy</summary>' + policy +
+      sections.map(([title,items]) => '<h3>' + escape(title) + '</h3><ul>' +
+        items.map(item => '<li>' + escape(item) + '<small class="portal-citation">Source: project setup</small></li>').join("") +
+        '</ul>').join("") + (leader() ? button("rules-edit-ai", "Edit AI policy") : "") + '</details>' +
       (data.rules?.mandatory_requirements.length
         ? "<details><summary>Requirements entered during setup</summary><ul>" +
           data.rules.mandatory_requirements
@@ -1465,6 +1494,7 @@ function requirementsView() {
         );
       },
     );
+  bind("rules-edit-ai", editAiPolicy);
   bind("add-requirement", () => edit());
   for (const r of data.requirements) bind("req-" + r.id, () => edit(r));
 }
@@ -1944,11 +1974,8 @@ function editTask(t) {
           due_date: form.get("due_date") || null,
           estimated_hours: Number(form.get("estimated_hours")),
         };
-        await result(
-          t
-            ? db.from("project_tasks").update(values).eq("id", t.id)
-            : db.from("project_tasks").insert(values),
-        );
+        if (t) await updateTask(db, t, values);
+        else await result(db.from("project_tasks").insert(values));
       },
     );
 }
@@ -2017,8 +2044,8 @@ function learningView() {
       await loadProject();
     });
 }
-function filesView() {
-  content(
+function filesView(target = document.getElementById("shared-content")) {
+  target.innerHTML = (
     '<header class="shared-header"><h2>Project documents</h2></header>' +
       (leader()
         ? '<form id="file-form" class="shared-form">' +
@@ -2047,7 +2074,7 @@ function filesView() {
             button("file-" + d.id, "Download") +
             "</article>",
         )
-        .join(""),
+        .join("")
   );
   if (leader())
     document.getElementById("file-form").onsubmit = async (e) => {
@@ -2120,7 +2147,8 @@ function historyView() {
         .map(
           (event) =>
             '<article class="shared-row"><div><b>' +
-            escape(event.description) +
+            escape(event.event_type === "project_tasks.update" ? "Task changed" :
+              event.event_type === "project_tasks.insert" ? "Task added" : event.description) +
             "</b><p>" +
             escape(memberName(event.actor_id)) +
             " · " +
@@ -2139,8 +2167,6 @@ const notificationPanel = notifications({
   when,
   notify,
   openProject: async (record) => {
-    if (wizard && draftChanges > savedChanges) await queueDraft();
-    clearTimeout(saveTimer);
     await openProject(record);
   },
   getSession: () => session,

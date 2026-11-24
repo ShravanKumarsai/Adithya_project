@@ -1,3 +1,4 @@
+import { updateTask } from "./portal/status.js";
 import {mountFinalTools} from "./final-workspace.js";
 import { mountPersonalStudio } from "./personal-studio.js";
 import {
@@ -75,7 +76,7 @@ const bar = (name, n, max, unit = "", kind = "") =>
 const input = (el, key) =>
   el.querySelector('[name="' + key + '"]')?.value.trim() || "";
 const day = 86400000;
-const dateEnd = (d) => (d ? new Date(d + "T23:59:59").getTime() : NaN);
+const dateEnd = (d) => (d ? new Date(d + "T23:59:59+05:30").getTime() : NaN);
 const bestSkill = (t) =>
   /pitch|present|demo/i.test(t)
     ? "Pitching"
@@ -329,7 +330,7 @@ export function mountBlueprint(ctx) {
       });
   }
   const post = (kind, body, extra = {}) =>
-    write("project_messages", { project_id: p.id, kind, body, ...extra });
+    write("project_messages", { project_id: p.id, kind, body, ...(activeTask ? {thread_task:activeTask} : {}), ...extra });
   const milestones = d.milestones || [];
   function charts() {
     const counts = stages.map(
@@ -755,13 +756,7 @@ export function mountBlueprint(ctx) {
         toolbar + '<div class="bp-board">' + cards + "</div>",
       );
     const move = async (id, status) => {
-      await result(
-        db
-          .from("project_tasks")
-          .update({ status })
-          .eq("project_id", p.id)
-          .eq("id", id),
-      );
+      await updateTask(db, d.tasks.find(task => task.id === id), { status });
       await refresh();
     };
     root
@@ -951,6 +946,8 @@ export function mountBlueprint(ctx) {
       ),
     );
   }
+  let activeTask = null;
+  const pendingMessages = new Map();
   let timelineProposals=[];
   let messages = [],
     files = [],
@@ -958,14 +955,13 @@ export function mountBlueprint(ctx) {
     loadVersion = 0;
   async function readChat() {
     const version = ++loadVersion;
-    const rows = await result(
-      db
-        .from("project_messages")
-        .select("*")
-        .eq("project_id", p.id)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
+    let query = db.from("project_messages").select("*").eq("project_id", p.id)
+      .order("created_at", { ascending: false }).limit(100);
+    if (d.portalReady) {
+      query = query.is("bulletin_type", null);
+      query = activeTask ? query.eq("thread_task", activeTask) : query.is("thread_task", null);
+    }
+    const rows = await result(query);
     const ids = rows.map((m) => m.id);
     const [attachments, ballots, proposals] = await Promise.all([
       ids.length
@@ -1155,11 +1151,15 @@ export function mountBlueprint(ctx) {
       '<section class="studio-chat" aria-label="Project chats"><div class="studio-chat-list"><header><h2>Chats</h2></header>' +
         '<button type="button" class="conversation-link" data-bp="team-thread" aria-current="true"><span class="chat-avatar" aria-hidden="true">#</span><span><strong>' +
         esc(p.name) +
-        " team</strong><small>Project channel</small></span></button>" +
+        " team</strong><small>General</small></span></button>" +
+        (d.portalReady ? '<details class="portal-chat-rooms"><summary>Task threads</summary>' +
+          d.tasks.map(task => '<button type="button" class="conversation-link" data-bp="thread-' +
+            esc(task.id) + '">' + esc(task.title) + '</button>').join("") +
+          (d.tasks.length ? '' : '<p>Add a task to start its thread.</p>') + '</details>' : '') +
         '<div id="studio-private-list"></div></div><div class="studio-chat-thread" id="studio-team-thread">' +
         "<header><div><h2>" +
-        esc(p.name) +
-        " team</h2><p>" +
+        '<span id="portal-thread-name">General</span>' +
+        "</h2><p>" +
         team.length +
         ' members</p></div><button type="button" class="mobile-chat-back button subtle" data-bp="chat-back">All chats</button></header>' +
         '<div id="bp-messages" class="studio-chat-log" role="log" aria-live="polite"></div>' +
@@ -1194,7 +1194,7 @@ export function mountBlueprint(ctx) {
         "</details></div></details>" +
         '<label class="studio-attach" title="Attach a file"><span aria-hidden="true">＋</span><span class="studio-sr">Attach a file up to 10 MB</span><input type="file" name="attach"></label>' +
         '<label class="studio-message-field"><span class="studio-sr">Message</span><textarea name="chat-body" rows="1" placeholder="Write a message" maxlength="6000"></textarea></label>' +
-        btn("send", "Send") +
+        btn("send", "Send") + '<span id="portal-chat-status" role="status"></span>' +
         '<output id="studio-attachment-name"></output></div><div id="bp-file-preview" aria-live="polite"></div></div><div id="v3-conversation" class="studio-chat-thread" hidden></div></section>',
     );
     const frame = root.querySelector(".studio-chat");
@@ -1207,7 +1207,17 @@ export function mountBlueprint(ctx) {
         .setAttribute("aria-current", "true");
       root.dispatchEvent(new Event("team-thread-open"));
     };
-    bind("team-thread", activateTeam);
+    const openThread = async (task, label, control) => {
+      activeTask = task;
+      activateTeam();
+      root.querySelector("#portal-thread-name").textContent = label;
+      for (const link of root.querySelectorAll('.conversation-link[aria-current="true"]')) link.removeAttribute("aria-current");
+      control.setAttribute("aria-current", "true");
+      await readChat();
+    };
+    bind("team-thread", control => openThread(null, "General", control));
+    if (d.portalReady) for (const task of d.tasks)
+      bind("thread-" + task.id, control => openThread(task.id, task.title, control));
     bind("chat-back", () => frame.classList.remove("show-thread"));
     root.querySelector('[name="attach"]').onchange = (e) => {
       root.querySelector("#studio-attachment-name").textContent =
@@ -1280,39 +1290,64 @@ export function mountBlueprint(ctx) {
       notify("Digest schedule saved.");
     });
     bind("send", async () => {
-      const file = root.querySelector("[name=attach]").files[0],
-        body = input(root, "chat-body") || file?.name;
+      const inputField = root.querySelector("[name=chat-body]");
+      const attachment = root.querySelector("[name=attach]");
+      const feedback = root.querySelector("#portal-chat-status");
+      const file = attachment.files[0];
+      const body = input(root, "chat-body") || file?.name;
       if (!body) throw Error("Write a message or choose a file.");
       if (file && (!file.size || file.size > 10 * 1024 * 1024))
         throw Error("Choose a file between one byte and 10 MB.");
-      const msg = await result(
-        db
-          .from("project_messages")
-          .insert({ project_id: p.id, kind: input(root, "kind"), body })
-          .select("id")
-          .single(),
-      );
-      root.querySelector("[name=chat-body]").value = "";
-      if (file) {
-        const path = p.id + "/" + msg.id + "/" + crypto.randomUUID();
-        await result(db.storage.from("team-chat").upload(path, file));
-        try {
-          await write("message_files", {
-            message_id: msg.id,
-            project_id: p.id,
-            storage_path: path,
-            name: file.name,
-            mime: file.type,
-            size: file.size,
-          });
-        } catch (e) {
-          await db.storage.from("team-chat").remove([path]);
-          throw e;
-        }
-        root.querySelector("[name=attach]").value = "";
-        root.querySelector("#studio-attachment-name").textContent = "";
+      if (!navigator.onLine) {
+        feedback.textContent = "Offline. Your draft is still here. Retry when connected.";
+        return;
       }
-      await readChat();
+      const room = activeTask || "general";
+      const kind = input(root, "kind");
+      let pending = pendingMessages.get(room);
+      if (!pending || pending.body !== body || pending.file !== file || pending.kind !== kind) {
+        pending = {id:crypto.randomUUID(), body, file, kind, sent:false};
+        pendingMessages.set(room, pending);
+      }
+      feedback.textContent = "Sending message…";
+      try {
+        if (!pending.sent) {
+          const payload = {project_id:p.id, kind, body,
+            ...(d.portalReady ? {id:pending.id, thread_task:activeTask} : {})};
+          const inserted = await db.from("project_messages").insert(payload).select("id").single();
+          if (d.portalReady && inserted.error?.code === "23505") {
+            await result(db.from("project_messages").select("id").eq("id",pending.id).eq("project_id",p.id).eq("author_id",uid).single());
+          } else {
+            if (inserted.error) throw inserted.error;
+            pending.id = inserted.data.id;
+          }
+          pending.sent = true;
+        }
+        if (file) {
+          feedback.textContent = "Uploading attachment…";
+          const path = p.id + "/" + pending.id + "/" + crypto.randomUUID();
+          await result(db.storage.from("team-chat").upload(path, file));
+          try {
+            await write("message_files", {
+              message_id:pending.id, project_id:p.id, storage_path:path,
+              name:file.name, mime:file.type, size:file.size,
+            });
+          } catch (error) {
+            await db.storage.from("team-chat").remove([path]);
+            throw error;
+          }
+        }
+        pendingMessages.delete(room);
+        if ((activeTask || "general") === room && inputField.value.trim() === (body === file?.name ? "" : body)) {
+          inputField.value = "";
+          attachment.value = "";
+          root.querySelector("#studio-attachment-name").textContent = "";
+        }
+        feedback.textContent = "Message sent.";
+        void readChat().catch(() => { feedback.textContent = "Sent. Refresh to load the conversation."; });
+      } catch (error) {
+        feedback.textContent = (pending.sent ? "Message sent. Retry the attachment. " : "Draft kept. Retry sending. ") + error.message;
+      }
     });
     bind("voice", () => {
       const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1750,16 +1785,11 @@ export function mountBlueprint(ctx) {
     (event) => {
       if (!root.isConnected) return;
       if (tab === "Chat") readChat().catch((e) => notify(e.message));
-      else if (event.new.author_id !== uid) {
-        const b = document.getElementById("tab-Chat");
-        if (b) {
-          b.dataset.count = String(
-            Number(sessionStorage.getItem("chat-count-" + uid + p.id) || 0) + 1,
-          );
-          sessionStorage.setItem("chat-count-" + uid + p.id, b.dataset.count);
-          b.innerHTML =
-            "<span>05</span>Team chat (" + Number(b.dataset.count) + ")";
-        }
+      else if (event.new.author_id !== uid && !(tab === "Bulletin" && event.new.bulletin_type)) {
+        const key = "chat-count-" + uid + p.id;
+        const count = Number(sessionStorage.getItem(key) || 0) + 1;
+        sessionStorage.setItem(key, String(count));
+        ctx.onUnread?.(count);
       }
     },
   );
@@ -1777,12 +1807,6 @@ export function mountBlueprint(ctx) {
         },
         () => readChat().catch((e) => notify(e.message)),
       );
-  }
-  if (tab === "Chat") sessionStorage.removeItem("chat-count-" + uid + p.id);
-  else {
-    const count = sessionStorage.getItem("chat-count-" + uid + p.id);
-    const link = document.getElementById("tab-Chat");
-    if (count && link) link.textContent = "Chats (" + Number(count) + ")";
   }
   channel.subscribe();
   return () => {

@@ -5,7 +5,7 @@ import {DB, storeScanPart, consumeScan} from "../server/vercel-storage.mjs";
 
 const routes = new Set([
   "assist", "github/token", "setup/rulebook", "setup/rulebook/part", "planning", "planning/key", "vercel/token",
-  "activity", "profile",
+  "activity", "profile", "usage",
 ]);
 const maxBody = 4 * 1024 * 1024;
 const env = {...process.env, DB};

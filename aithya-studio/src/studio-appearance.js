@@ -5,7 +5,7 @@ export function studioAppearance() {
   return {
     theme: styles.includes(localStorage.getItem("aithya.theme"))
       ? localStorage.getItem("aithya.theme")
-      : "system",
+      : "dark",
     accent: accents.includes(localStorage.getItem("aithya.accent"))
       ? localStorage.getItem("aithya.accent")
       : "blue",

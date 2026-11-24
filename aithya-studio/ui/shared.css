@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Special+Elite&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Mono:wght@700&display=swap");
 *, *::before, *::after { box-sizing: border-box }
 body { margin: 0 }
 :is(h1,h2,h3,p) { margin: 0 }
@@ -870,3 +868,225 @@ body .shared-main p {max-width:70ch}
 .planning-templates label:has(input:checked) {background:var(--lit);border-color:var(--accent)}
 .planning-templates small {display:block}
 #plan-task-review fieldset {margin-block:var(--space-2)}
+
+/* Shared portal surfaces. Explicit Blueprint, light and custom accent choices retain their palettes. */
+:root {
+  --portal-radius: 1rem;
+  --portal-gap: clamp(1rem, 3vw, 2rem);
+  --portal-motion: 180ms ease-out;
+  --portal-drawer-motion: 220ms cubic-bezier(.2,.85,.22,1);
+  --portal-glass: linear-gradient(145deg, var(--raised), var(--panel));
+  --portal-highlight: color-mix(in srgb, var(--accent) 13%, var(--raised));
+}
+:root:not([data-blueprint]), :root[data-blueprint=dark] {
+  --page: #0a101e;
+  --text: #f0f4fc;
+  --muted: #adbbd2;
+  --panel: #141e30;
+  --raised: #1b2940;
+  --recess: #10192a;
+  --lit: #27374f;
+  --line: #35445c;
+  --edge: #48566b;
+  --green: #83e7bb;
+  --yellow: #ffcf87;
+  --red: #ffa2ab;
+  color-scheme: dark;
+}
+:root:not([data-blueprint]), :root[data-blueprint=dark]:is([data-accent=blue],:not([data-accent])) {
+  --accent: #75e4e3;
+  --ink: #08262d;
+}
+:root:not([data-blueprint]) body, :root[data-blueprint=dark] body {
+  background: radial-gradient(ellipse 57rem 37rem at 90% -10rem, #232543 0, transparent 76%),
+    radial-gradient(ellipse 35rem 29rem at -11rem 35%, #103038 0, transparent 80%), var(--page);
+}
+:root:not([data-blueprint=blueprint]) body {
+  min-height: 100dvh;
+  font: 400 1rem/1.5 var(--ui);
+}
+:root:not([data-blueprint=blueprint]) .shared-main :is(h1,h2,h3) {
+  font-family: var(--ui);
+  letter-spacing: -.025em;
+  text-transform: none;
+}
+:root:not([data-blueprint=blueprint]) .shared-main h1 {font-size: clamp(2rem,4vw,3.25rem);line-height: 1.12}
+:root:not([data-blueprint=blueprint]) .shared-main h2 {font-size: clamp(1.25rem,2.4vw,1.65rem)}
+:root:not([data-blueprint=blueprint]) .shared-main h3 {font-size: 1rem;color: var(--text)}
+.shared-shell :is(button,.button,summary,.studio-attach), dialog :is(button,summary) {
+  min-height: var(--target);
+}
+.shared-shell :is(input,select):not([type=checkbox],[type=radio],[type=file]), dialog :is(input,select):not([type=checkbox],[type=radio],[type=file]) {
+  min-height: var(--target);
+}
+:root:not([data-blueprint=blueprint]) body :is(button,.button,input,textarea,select,.studio-attach) {
+  border-radius: .65rem;
+}
+:root:not([data-blueprint=blueprint]) body :is(button,.button,a,summary) {
+  transition: color var(--portal-motion), border-color var(--portal-motion), background-color var(--portal-motion);
+}
+body :is(a,button,input,textarea,select,summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.shared-top-actions, .shared-header {flex-wrap: wrap}
+.shared-top-actions {min-width: 0}
+.shared-shell .wordmark {display: inline-flex;align-items: center;min-height: var(--target);text-decoration: none}
+:root:not([data-blueprint=blueprint]) .wordmark {
+  font: 700 1.45rem var(--ui);
+  letter-spacing: -.06em;
+}
+:root:not([data-blueprint=blueprint]) .studio-global-nav a {border-radius: .6rem;color: var(--muted)}
+:root:not([data-blueprint=blueprint]) .studio-global-nav a[aria-current] {color: var(--text);background: var(--panel)}
+:root:not([data-blueprint=blueprint]) .shared-main > .shared-header {
+  border: 0;
+  box-shadow: none;
+  background: none;
+  padding: .35rem 0 1.25rem;
+}
+:root:not([data-blueprint=blueprint]) .shared-main .auth-panel {
+  max-width: 29rem;
+  margin: clamp(1.5rem,8vh,6rem) auto;
+  padding: clamp(1.3rem,4vw,2.5rem);
+  background: var(--portal-glass);
+  border: 1px solid var(--line);
+  border-radius: 1.5rem;
+  box-shadow: inset 0 1px color-mix(in srgb,var(--text) 9%,transparent), 0 1.5rem 4rem #05091130;
+}
+.auth-panel h1 + p {margin: .6rem 0 1.3rem}
+.auth-panel .shared-form .primary {width: 100%}
+.auth-panel nav {gap: .4rem;flex-wrap: wrap;margin-bottom: 0}
+.auth-panel nav button {flex: 1 1 auto}
+.shared-form input::placeholder, .portal-shell input::placeholder, .portal-shell textarea::placeholder {
+  color: var(--muted); opacity: .9;
+}
+:root:not([data-blueprint=blueprint]) :is(.wizard-group,.bp-panel:not(.bp-draft),.shared-note,.studio-chat,.hero-timeline,.bp-lane,.bp-card) {
+  border-radius: var(--portal-radius);
+}
+:root:not([data-blueprint=blueprint]) :is(.wizard-group,.auth-panel) :is(input,textarea,select),
+:root:not([data-blueprint=blueprint]) .portal-shell :is(input,textarea,select) {
+  background-color: var(--recess);
+}
+.shared-form .wizard-group {margin-block: 0 .65rem}
+#wizard-form .draft-info {align-self: start}
+.studio-skeleton {min-height: 7rem;border-radius: var(--portal-radius)}
+.studio-skeleton i {height: .8rem;border-radius: 99px}
+@keyframes portal-arrive {from {opacity: .35;transform: translateY(3px)} to {opacity: 1;transform: none}}
+@keyframes portal-drawer {from {opacity: .5;transform: translateY(.7rem)} to {opacity: 1;transform: none}}
+#shared-dialog[open], #command-dialog[open] {animation: portal-drawer var(--portal-drawer-motion)}
+:root:not([data-blueprint=blueprint]) dialog:not(.studio-case-sheet) {border-radius: var(--portal-radius)}
+:root:not([data-blueprint=blueprint]) #shared-dialog.studio-bottom-sheet {border-radius: var(--portal-radius) var(--portal-radius) 0 0}
+
+.portal-shell {min-width: 0;max-width: 76rem;margin-inline: auto;overflow-wrap: anywhere}
+.portal-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem var(--portal-gap);
+  padding: .6rem 0 1.3rem;
+}
+.portal-head > *, .portal-content, .portal-content > *, .portal-bulletin > * {min-width: 0}
+.portal-head :is(p,small,time), .portal-post :is(small,time) {color: var(--muted)}
+.portal-tools, .portal-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+.portal-tools summary {display: flex;align-items: center;gap: .5rem}
+.portal-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: .25rem;
+  overflow-x: auto;
+  padding: .3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--portal-radius);
+  background: var(--recess);
+  scrollbar-width: thin;
+}
+.portal-tabs :is(button,a) {
+  flex: 1 0 auto;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: var(--target);
+  padding: .45rem .85rem;
+  border: 1px solid transparent;
+  border-radius: .72rem;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+.portal-tabs :is([aria-current=page],[aria-selected=true]), .portal-filter :is([aria-pressed=true],[aria-selected=true]) {
+  background: var(--portal-highlight);
+  border-color: color-mix(in srgb,var(--accent) 40%,var(--line));color: var(--accent);
+}
+.portal-content {padding-top: var(--portal-gap);animation: portal-arrive var(--portal-motion)}
+.portal-bulletin {display: grid;gap: 1rem;align-content: start}
+.portal-bulletin :is(h2,h3) {margin: 0}
+.portal-post-form {display: grid;gap: .65rem;align-content: start;background: var(--portal-glass);border: 1px solid var(--line);border-radius: var(--portal-radius);padding: clamp(.85rem,2.4vw,1.4rem)}
+.portal-post-form :is(textarea,input:not([type=checkbox],[type=radio])) {width: 100%}
+.portal-post-form textarea {min-height: 5rem}
+.portal-post-form :is(label,select) {max-width: 100%}
+.portal-pins {border-inline-start: 3px solid var(--yellow);padding: .65rem .95rem;background: color-mix(in srgb,var(--yellow) 5%,var(--panel));border-radius: 0 .7rem .7rem 0}
+.portal-pins:empty {display: none}
+.portal-post {padding: .95rem 0;border-block-end: 1px solid var(--line)}
+.portal-post p {white-space: pre-wrap;margin: .4rem 0}
+.portal-post header {display: flex;align-items: baseline;justify-content: space-between;flex-wrap: wrap;gap: .35rem 1rem}
+.portal-filter {margin-block: .35rem}
+.portal-filter button {padding-inline: .75rem}
+.portal-bulletin input[type=search] {width: min(100%,24rem)}
+:root:not([data-blueprint=blueprint]) .studio-chat {
+  overflow: clip;
+  background: var(--recess);
+  height: min(47rem,78dvh);
+  min-height: min(28rem,65dvh);
+}
+:root:not([data-blueprint=blueprint]) .studio-chat .conversation-link {border-radius: 0}
+:root:not([data-blueprint=blueprint]) .studio-chat .conversation-link[aria-current=true] {background: var(--portal-highlight);box-shadow: inset 3px 0 var(--accent)}
+:root:not([data-blueprint=blueprint]) .studio-chat .chat-bubble {border-radius: 1rem 1rem 1rem .25rem}
+:root:not([data-blueprint=blueprint]) .studio-chat .chat-bubble.mine {border-radius: 1rem 1rem .25rem 1rem;background: var(--portal-highlight);color: var(--text)}
+:root:not([data-blueprint=blueprint]) .studio-chat .chat-bubble.mine small {color: var(--muted)}
+.studio-chat .chat-bubble .button,.studio-composer .studio-attach,.studio-composer summary {min-height: var(--target);min-width: var(--target)}
+.studio-composer summary {display: grid;place-items: center}
+.studio-composer .studio-message-field textarea {min-height: var(--target);border-radius: 1rem}
+.studio-attach:focus-within {outline: 2px solid var(--accent);outline-offset: 3px}
+
+@media (max-width: 640px) {
+  .shared-top {padding-block: .5rem;gap: .35rem .7rem}
+  .shared-top-actions {gap: .25rem;max-width: 100%;flex: 0 1 auto}
+  .shared-main {padding-top: 1rem}
+  .portal-head {align-items: start;padding-bottom: .85rem}
+  .portal-tabs {gap: .12rem;padding: .2rem}
+  .portal-tabs :is(button,a) {padding-inline: .38rem;font-size: .875rem}
+  .portal-content {padding-top: 1.15rem}
+  .portal-post-form {padding: .85rem}
+  .studio-composer {gap: .25rem;padding: .45rem}
+  .shared-main :is(table,fieldset) {max-width: 100%}
+  .shared-main :is(.project-entry,.shared-row) {flex-wrap: wrap}
+  .shared-main :is(.project-entry,.shared-row) > * {min-width: 0;overflow-wrap: anywhere}
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-content,#shared-dialog[open],#command-dialog[open] {animation: none}
+}
+
+.portal-local-nav {margin-block: .6rem 0; gap: .35rem .75rem}
+.portal-local-nav a, .portal-tools details a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: .45rem;
+}
+.portal-local-nav [aria-current=page] {color: var(--accent);text-decoration: underline;text-underline-offset: .3rem}
+.portal-source-status {margin: .55rem 0;color: var(--muted);font-size: .875rem}
+.portal-citation {display: block;color: var(--muted);font-size: .875rem}
+.portal-deadline {font-size: clamp(1.25rem, 5vw, 2rem);font-weight: 650}
+.portal-content ul {overflow-wrap: anywhere}
+.portal-chat-rooms {padding: .2rem .7rem}
+.portal-chat-rooms .conversation-link {text-align: start;white-space: normal}
+#portal-chat-status:empty {display:none}
+#portal-chat-status {grid-column: 1 / -1;color:var(--muted);font-size:.875rem}

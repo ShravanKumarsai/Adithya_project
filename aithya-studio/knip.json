@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "worker.mjs",
+    "api/studio.mjs",
+    "src/shared.js",
+    "tests/*.test.mjs"
+  ],
+  "project": [
+    "*.mjs",
+    "src/**/*.{js,tsx}",
+    "server/**/*.mjs",
+    "api/**/*.mjs",
+    "tests/*.mjs"
+  ],
+  "ignoreDependencies": [
+    "pdfjs-dist"
+  ]
+}

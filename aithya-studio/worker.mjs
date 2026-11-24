@@ -1,3 +1,4 @@
+import { projectUsage } from "./server/project-usage.mjs";
 import { studioAI } from "./server/ai-service.mjs";
 import { github, isRepo } from "./server/github.mjs";
 import { assets } from 'studio:assets';
@@ -156,6 +157,7 @@ export default {
     if (url.pathname === '/api/vercel/token') return projectGeminiKeyResponse(request,env,url,true);
     if (url.pathname === '/api/planning/key') return projectGeminiKeyResponse(request,env,url);
     if (request.method !== 'GET') return json({error:'Method not allowed.'},405);
+    if (url.pathname === '/api/usage') return projectUsage(request,env,url,user);
     if (url.pathname === '/api/profile') return json({...user, vercelConfigured:Boolean(env.VERCEL_TOKEN), aiConfigured:Boolean(env.OPENAI_API_KEY)});
     if (url.pathname === '/api/activity') {
       const id = url.searchParams.get('project');

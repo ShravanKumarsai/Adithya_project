@@ -1,19 +1,38 @@
 import { build } from "esbuild";
-import { cp, mkdir, readFile, readdir } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 
-await build({
+await rm("ui/chunks", {recursive:true, force:true});
+const client = await build({
+  metafile: true,
   entryPoints: ["src/shared.js"],
   bundle: true,
   format: "esm",
   platform: "browser",
+  jsx: "automatic",
   external: ["/rulebook-pdf.mjs"],
-  outfile: "ui/shared.bundle.js",
+  splitting: true,
+  entryNames: "shared.bundle",
+  chunkNames: "chunks/[name]-[hash]",
+  outdir: "ui",
   target: ["es2022"],
   minify: true,
 });
 
+const preloads = new Set();
+function collectImports(file) {
+  for (const dependency of client.metafile.outputs[file]?.imports || []) {
+    if (dependency.kind !== "import-statement" || dependency.external || preloads.has(dependency.path)) continue;
+    preloads.add(dependency.path);
+    collectImports(dependency.path);
+  }
+}
+collectImports("ui/shared.bundle.js");
+const html = await readFile("ui/shared.html", "utf8");
+const hints = [...preloads].map(file => '<link rel="modulepreload" href="/' + file.slice(3) + '">').join("\n");
+await writeFile("ui/shared.generated.html", html.replace("</head>", hints + "\n  </head>"));
+
 const assets = {
-  "/shared": ["ui/shared.html", "text/html"],
+  "/shared": ["ui/shared.generated.html", "text/html"],
   "/shared.css": ["ui/shared.css", "text/css"],
   "/shared.bundle.js": ["ui/shared.bundle.js", "text/javascript"],
   "/studio.webmanifest": ["ui/studio.webmanifest", "application/manifest+json"],
@@ -23,6 +42,9 @@ const assets = {
   "/rulebook-pdf.worker.mjs": ["node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs", "text/javascript"],
   "/rulebook-pdf.LICENSE.txt": ["node_modules/pdfjs-dist/LICENSE", "text/plain"],
 };
+for (const chunk of await readdir("ui/chunks")) {
+  if (chunk.endsWith(".js")) assets["/chunks/" + chunk] = ["ui/chunks/" + chunk, "text/javascript"];
+}
 const entries = await Promise.all(
   Object.entries(assets).map(async ([route, [file, type]]) =>
     [route, [type + "; charset=utf-8", await readFile(file, "utf8")]],

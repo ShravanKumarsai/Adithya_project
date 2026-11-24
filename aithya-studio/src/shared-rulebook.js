@@ -16,7 +16,7 @@ const scanTypes = {
   webp: "image/webp",
 };
 
-async function scanRulebook(file, mime) {
+async function scanRulebook(file, mime, progress) {
   if (!mime)
     throw Error("Use a PDF, JPEG, PNG, or WebP file for Gemini scanning.");
   if (file.size > rulebookLimit)
@@ -34,6 +34,7 @@ async function scanRulebook(file, mime) {
     const scanId = crypto.randomUUID();
     const parts = Math.ceil(file.size / chunkSize);
     for (let part = 0; part < parts; part++) {
+      progress("Uploading " + (part + 1) + " of " + parts + " parts…");
       const response = await fetch(url + "/part?scan=" + scanId + "&part=" + part, {
         method: "POST", headers, signal: AbortSignal.timeout(20000),
         body: file.slice(part * chunkSize, (part + 1) * chunkSize, mime),
@@ -46,6 +47,7 @@ async function scanRulebook(file, mime) {
     url += "?scan=" + scanId + "&parts=" + parts;
     body = "";
   }
+  progress("Finding deadlines and requirements…");
   const response = await fetch(url, {method:"POST", headers, body, signal:AbortSignal.timeout(75000)});
   if (response.status === 413) throw Error("The file exceeds the upload limit for this deployment.");
   const payload = await response.json();
@@ -86,7 +88,7 @@ export function openRulebookImport({ dialog, draft, escape, onApply }) {
     const pasted = body.querySelector("#rulebook-text").value.trim();
     submit.disabled = true;
     review.replaceChildren();
-    status.textContent = "Reading the rules…";
+    status.textContent = "Reading rulebook…";
     try {
       if (!file && !pasted) throw Error("Choose a file or paste some rules.");
       if (file && pasted)
@@ -101,7 +103,7 @@ export function openRulebookImport({ dialog, draft, escape, onApply }) {
       if (!useGemini && mime?.startsWith("image/"))
         throw Error("Select Use Gemini to read a photo.");
       const suggestions = useGemini
-        ? scannedRulebookSuggestions(await scanRulebook(file, mime), draft)
+        ? scannedRulebookSuggestions(await scanRulebook(file, mime, message => {status.textContent = message;}), draft)
         : rulebookSuggestions(file ? await readRulebook(file) : pasted, draft);
       if (!dialog.open || !form.isConnected) return;
       if (!suggestions.length)
@@ -126,7 +128,10 @@ export function openRulebookImport({ dialog, draft, escape, onApply }) {
               escape(
                 Array.isArray(item.value) ? item.value.join("\n") : item.value,
               ) +
-              "</span></span></label>",
+              '</span><small class="portal-citation">' +
+              escape(file ? file.name : "Pasted rulebook text") +
+              (useGemini ? " · Unverified extraction" : " · Label match") +
+              "</small></span></label>",
           )
           .join("") +
         '<button class="button primary">Fill selected fields</button></form>';

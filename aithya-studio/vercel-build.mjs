@@ -4,11 +4,12 @@ const output = "public-vercel";
 await rm(output, {recursive:true, force:true});
 await mkdir(output);
 await mkdir(output + "/icons");
+await cp("ui/chunks", output + "/chunks", {recursive:true});
 const assets = {
   "ui/studio.webmanifest":"studio.webmanifest",
   "ui/icons/studio-192.png":"icons/studio-192.png",
   "ui/icons/studio-512.png":"icons/studio-512.png",
-  "ui/shared.html":"index.html",
+  "ui/shared.generated.html":"index.html",
   "ui/shared.css":"shared.css",
   "scripts/claude-credit-sync.py":"claude-credit-sync.txt",
   "scripts/ai-credit-connector.py":"ai-credit-connector.txt",

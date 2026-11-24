@@ -5,3 +5,7 @@ dist/
 
 node_modules/
 ui/shared.bundle.js
+
+public-vercel/
+ui/chunks/
+ui/shared.generated.html

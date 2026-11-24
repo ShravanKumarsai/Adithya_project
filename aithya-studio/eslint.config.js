@@ -15,6 +15,7 @@ export default [
       "public-*/**",
       "node_modules/**",
       "ui/shared.bundle.js",
+      "ui/chunks/**",
     ],
   },
   {

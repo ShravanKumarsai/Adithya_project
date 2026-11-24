@@ -231,7 +231,7 @@ const app = createServer(async (req, res) => {
   });
   try {
     const page = await browser.newPage({
-      viewport: { width: 375, height: 820 },
+      viewport: { width: 360, height: 820 },
     });
     let errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -263,20 +263,44 @@ const app = createServer(async (req, res) => {
       { key, token, metadata, exp },
     );
     let draft, createdTask;
+    let chatDrafts = 0;
+    const messages = [];
+    const snapshot = () => ({
+      portalReady:true, personalReady:true, project:fixture.projects[0], members:fixture.project_members,
+      requirements:fixture.requirement_items, rules:fixture.project_requirements[0], ai:fixture.project_ai_constraints[0],
+      skills:fixture.user_skills, availability:fixture.member_availability, tasks:fixture.project_tasks, milestones:fixture.milestones,
+      documents:[], learning:[], activity:[], invitations:[],
+    });
     await page.route("https://ekqfotmlnqqrbcizjtfz.supabase.co/**", (route) => {
       const req = route.request(),
         url = new URL(req.url()),
         table = url.pathname.split("/").at(-1);
       if (url.pathname.includes("/auth/"))
         return route.fulfill({ json: metadata });
-      if (table === "save_project_draft") {
+      if (table === "portal_project_snapshot") return route.fulfill({ json: snapshot() });
+      if (table === "save_project_draft") throw Error("Setup cannot write before approval");
+      if (table === "approve_portal_project") {
         draft = req.postDataJSON().p_content;
-        return route.fulfill({ json: { revision: 1 } });
-      }
-      if (table === "publish_project_draft") {
         assert.equal(draft.project.name, "River Jam");
         fixture.projects[0].name = draft.project.name;
         return route.fulfill({ json: project });
+      }
+      if (table === "project_messages" && req.method() === "POST") {
+        const row = { ...req.postDataJSON(), id:crypto.randomUUID(), author_id:user, created_at:now, resolved_at:null };
+        messages.push(row);
+        if (!row.bulletin_type) chatDrafts++;
+        return route.fulfill({ json: {id:row.id}, status:201 });
+      }
+      if (table === "project_messages") return route.fulfill({ json: messages.filter(row => {
+        const bulletin = url.searchParams.get("bulletin_type");
+        const task = url.searchParams.get("thread_task");
+        if (bulletin === "not.is.null") return Boolean(row.bulletin_type);
+        return !row.bulletin_type && (task === "is.null" ? !row.thread_task : task === "eq." + row.thread_task);
+      }) });
+      if (table === "resolve_bulletin_post") {
+        const {p_id,p_resolved} = req.postDataJSON();
+        messages.find(row => row.id === p_id).resolved_at = p_resolved ? now : null;
+        return route.fulfill({ json:null });
       }
       if (table === "project_tasks" && req.method() === "POST") {
         [createdTask] = req.postDataJSON();
@@ -295,44 +319,50 @@ const app = createServer(async (req, res) => {
       });
     });
     await page.goto(origin + "/shared?project=" + project);
-    await page
-      .locator("#area-Overview")
-      .waitFor({ timeout: 7000 })
-      .catch(async (error) => {
-        console.error(errors, await page.locator("body").innerText());
-        throw error;
-      });
-
-    for (const group of ["Overview", "Plan", "Team", "Work", "Activity"]) {
-      await page.locator("#area-" + group).click();
-      const sections = await page
-        .getByRole("tablist", { name: group + " sections" })
-        .getByRole("tab")
-        .evaluateAll((tabs) => tabs.map((tab) => tab.id));
-      for (const id of sections) {
-        await page.locator("#" + id).click();
-        assert.equal(
-          await page.locator("#shared-content").getAttribute("aria-labelledby"),
-          id,
-        );
-        assert.ok(
-          (await page.evaluate(() => document.documentElement.scrollWidth)) <=
-            375,
-          group + " " + id + " overflow",
-        );
+    const navigation = page.getByRole("navigation", {name:"Project areas"});
+    await navigation.waitFor({timeout:8000}).catch(async error => { console.error(errors, await page.locator("body").innerText()); throw error; });
+    for (const name of ["Today", "Rules", "Work", "Team", "Submit"]) {
+      await navigation.getByRole("link", {name, exact:true}).click();
+      await navigation.getByRole("link", {name, exact:true, current:"page"}).waitFor();
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 360), name + " overflow");
+      if (process.env.PORTAL_SCREENSHOTS && name !== "Team") {
+        const file = process.env.PORTAL_SCREENSHOTS + "/" + name.toLowerCase();
+        await page.waitForFunction(() => document.querySelector("#shared-content")?.querySelector("h2"));
+        await page.screenshot({path:file + "-mobile.png", fullPage:true});
+        await page.setViewportSize({width:1440,height:960});
+        await page.screenshot({path:file + "-desktop.png", fullPage:true});
+        await page.setViewportSize({width:360,height:820});
       }
     }
-    await page.locator("#area-Overview").focus();
-    await page.keyboard.press("ArrowRight");
-    await page.waitForFunction(() => document.activeElement.id === "area-Plan");
-    assert.equal(
-      await page.locator("#area-Plan").getAttribute("aria-selected"),
-      "true",
-    );
+    await page.goBack();
+    await navigation.getByRole("link", {name:"Team", current:"page"}).waitFor();
+    await page.getByLabel("Share a team update").fill("Blocked on the API contract");
+    await page.getByRole("button", {name:"Post update"}).click();
+    assert.equal(messages[0].bulletin_type, "blocker");
+    await page.getByRole("button", {name:"Blockers", exact:true}).click();
+    await page.getByRole("article").getByText("Blocked on the API contract").waitFor();
+    await page.getByRole("button", {name:"Mark resolved"}).click();
+    await page.getByText("No posts match.").waitFor();
+    await page.getByRole("button", {name:"All", exact:true}).click();
+    await page.getByText("Blocker / Help · Resolved").waitFor();
+    if (process.env.PORTAL_SCREENSHOTS) {
+      await page.screenshot({path:process.env.PORTAL_SCREENSHOTS + "/bulletin-mobile.png", fullPage:true});
+      await page.setViewportSize({width:1440,height:960});
+      await page.screenshot({path:process.env.PORTAL_SCREENSHOTS + "/bulletin-desktop.png", fullPage:true});
+      await page.setViewportSize({width:360,height:820});
+    }
+    await page.getByRole("navigation", {name:"Team tools"}).getByRole("link", {name:"Chats"}).click();
+    await page.getByText("Task threads", {exact:true}).click();
+    await page.getByRole("button", {name:fixture.project_tasks[0].title}).click();
+    await page.getByRole("textbox", {name:"Message", exact:true}).fill("Here is the draft");
+    await page.getByRole("button", {name:"Send", exact:true}).click();
+    await page.getByText("Here is the draft", {exact:true}).waitFor();
+    assert.equal(chatDrafts, 1);
+    assert.equal(messages.at(-1).thread_task, fixture.project_tasks[0].id);
     await page.keyboard.press("Control+k");
     await page.getByLabel("Search commands and projects").fill("mentor");
     await page.keyboard.press("Enter");
-    await page.locator("#tab-Mentor[aria-selected=true]").waitFor();
+    await page.waitForURL(/sheet=AI\+mentor/);
     await page
       .getByRole("navigation", { name: "Workspace", exact: true })
       .getByRole("link", { name: "Projects", exact: true })
@@ -352,14 +382,17 @@ const app = createServer(async (req, res) => {
       await page.locator("#f-submission_deadline").inputValue(),
       "2027-02-03",
     );
-    await page
-      .getByRole("button", { name: "Create project", exact: true })
-      .click();
+    assert.equal(draft, undefined);
+    await page.reload();
+    await page.getByRole("button", {name:"Resume", exact:true}).click();
+    assert.equal(await page.locator("#f-name").inputValue(), "River Jam");
+    assert.equal(draft, undefined);
+    await page.getByRole("button", {name:"Create project", exact:true}).click();
     await page
       .getByRole("heading", { name: "River Jam", exact: true })
       .waitFor();
-    await page.locator("#area-Plan").click();
-    await page.locator("#tab-AI-plan").click();
+    await navigation.getByRole("link", {name:"Work", exact:true}).click();
+    await page.getByRole("navigation", {name:"Work tools"}).getByRole("link", {name:"Plan", exact:true}).click();
     await page.getByRole("button", { name: "Review plan tasks" }).click();
     await page
       .locator('[name="requirement-0"]')
@@ -368,7 +401,7 @@ const app = createServer(async (req, res) => {
     await page.getByText("Added 1 tasks to the board.").waitFor();
     assert.equal(createdTask.title, "Ship from saved plan");
     assert.equal(createdTask.requirement_id, fixture.requirement_items[0].id);
-    await page.locator("#tab-Setup").click();
+    await navigation.getByRole("link", {name:"Rules", exact:true}).click();
     await page.getByRole("heading", { name: "Task coverage" }).waitFor();
     await page.getByText("0 of 1 linked tasks done").waitFor();
     await page
@@ -378,7 +411,7 @@ const app = createServer(async (req, res) => {
     await page.getByRole("heading", { name: "Today", exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log(
-      "Mobile project navigation, linked tabs, keyboard commands, rulebook preview and Today passed.",
+      "Mobile navigation, browser Back, bulletin, task thread, tab-local rulebook setup, plan and Today passed.",
     );
   } finally {
     await browser.close();
