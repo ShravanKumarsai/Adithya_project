@@ -34,6 +34,9 @@ function applyRouteTheme(inProject) {
 applyRouteTheme(new URL(location.href).searchParams.has("project"));
 const main = document.getElementById("shared-main");
 const dialog = document.getElementById("shared-dialog");
+const initialAuthURL = new URL(location.href);
+const hasAuthCallback = initialAuthURL.searchParams.has("code") ||
+  new URLSearchParams(initialAuthURL.hash.slice(1)).has("access_token");
 const field = (name, label, value = "", type = "text", required = false) =>
   '<label for="f-' +
   name +
@@ -211,28 +214,41 @@ function confirmAction(title, description, action) {
     },
   );
 }
+function authReturnURL() {
+  const current = new URL(location.href);
+  const destination = new URL("/shared", current.origin);
+  for (const name of ["project", "sheet", "view", "task"]) {
+    if (current.searchParams.has(name)) destination.searchParams.set(name, current.searchParams.get(name));
+  }
+  return destination;
+}
 function authScreen() {
   const recovery = authMode === "recover";
   const reset = authMode === "reset";
+  const signup = authMode === "signup";
+  const login = !recovery && !reset && !signup;
+  const title = recovery ? "Choose a new password" : reset ? "Reset your password" : signup ? "Create your DraftDeck account" : "Welcome to DraftDeck";
+  const submitLabel = recovery ? "Update password" : reset ? "Send reset link" : signup ? "Create account" : "Sign in with email";
   main.innerHTML = '<section class="auth-panel"><h1>' +
-    (recovery ? "Choose a new password" : reset ? "Reset your password" : "Welcome to DraftDeck") +
-    '</h1><p class="shared-muted">Use your Google account to create or join a project.</p>' +
-    (!reset && !recovery ? button("google-login","Continue with Google",true) + '<details><summary>Sign in with an existing password</summary>' : '') +
+    title + '</h1>' +
+    (login ? '<div class="shared-actions">' + button("google-login", "Continue with Google", true) + '</div>' : '') +
     '<form id="auth-form" class="shared-form">' +
     (!recovery ? field("email","Email","","email",true) : "") +
     (!reset ? field("password","Password","","password",true) : "") +
-    '<button class="button subtle">' + (recovery ? "Update password" : reset ? "Send reset link" : "Sign in") +
-    '</button></form>' + button(reset ? "auth-login" : "auth-reset",reset ? "Back to sign in" : "Forgot password?") +
-    (!reset && !recovery ? "</details>" : "") + '<div id="auth-error" role="alert"></div></section>';
+    '<button class="button subtle">' + submitLabel + '</button></form>' +
+    '<div class="shared-actions">' + (login ? button("auth-signup", "Create an account") + button("auth-reset", "Forgot password?") :
+      recovery ? "" : button("auth-login", "Back to sign in")) +
+    '</div><div id="auth-error" role="alert"></div></section>';
+  const passwordInput = document.getElementById("f-password");
+  if (passwordInput) passwordInput.autocomplete = signup || recovery ? "new-password" : "current-password";
+  const emailInput = document.getElementById("f-email");
+  if (emailInput) emailInput.autocomplete = "email";
   bind("google-login", async () => {
-    const redirect = new URL("/shared",location.origin);
-    const activePage = new URL(location.href);
-    for (const name of ["project","sheet"]) if (activePage.searchParams.has(name))
-      redirect.searchParams.set(name,activePage.searchParams.get(name));
-    const {error} = await db.auth.signInWithOAuth({provider:"google",options:{redirectTo:redirect.href}});
+    const {error} = await db.auth.signInWithOAuth({provider:"google",options:{redirectTo:authReturnURL().href}});
     if (error) document.getElementById("auth-error").innerHTML = errorBox(error);
   });
   bind("auth-reset",()=>{authMode="reset";authScreen();});
+  bind("auth-signup",()=>{authMode="signup";authScreen();});
   bind("auth-login",()=>{authMode="login";authScreen();});
   document.getElementById("auth-form").onsubmit=async event=>{
     event.preventDefault();
@@ -240,16 +256,30 @@ function authScreen() {
     const form=new FormData(event.currentTarget);
     const email=String(form.get("email")||"").trim().toLowerCase();
     const password=String(form.get("password")||"");
+    const destination = authReturnURL();
     try {
       if (recovery) {
         if (password.length<10) throw Error("Use at least 10 characters.");
         await result(db.auth.updateUser({password}));
         authMode="login";
+        history.replaceState(null, "", destination);
         await workspace();
       } else if (reset) {
-        await result(db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+"/shared"}));
+        await result(db.auth.resetPasswordForEmail(email,{redirectTo:destination.href}));
         notify("Check your email for the recovery link.");
-      } else await result(db.auth.signInWithPassword({email,password}));
+      } else if (signup) {
+        if (password.length < 10) throw Error("Use at least 10 characters.");
+        const account = await result(db.auth.signUp({email,password,options:{emailRedirectTo:destination.href}}));
+        authMode = "login";
+        if (account.session) history.replaceState(null, "", destination);
+        else {
+          authScreen();
+          notify("Check your email to confirm your DraftDeck account, then sign in.");
+        }
+      } else {
+        await result(db.auth.signInWithPassword({email,password}));
+        history.replaceState(null, "", destination);
+      }
     } catch (error) {
       document.getElementById("auth-error").innerHTML=errorBox(error);
     } finally {event.submitter.disabled=false;}
@@ -319,12 +349,11 @@ async function workspace() {
     authScreen();
     return;
   }
-  if (session.user.app_metadata?.provider === "google" || activeRoute === "profile") {
+  if (activeRoute === "profile") {
     main.innerHTML=skeleton("Loading your profile");
     const profile = await db.from("studio_account_profiles").select("intake").eq("user_id",session.user.id).maybeSingle();
     if (version !== generation) return;
-    if (!profile.error && (!profile.data || activeRoute === "profile")) {
-      nav.hidden = !profile.data;
+    if (!profile.error) {
       await openAccountInterview(profile.data?.intake);
       return;
     }
@@ -2250,6 +2279,8 @@ db.auth.onAuthStateChange((event, next) => {
     authScreen();
     return;
   }
+  if (next && hasAuthCallback && location.pathname === "/" && authMode !== "recover")
+    history.replaceState(null, "", authReturnURL());
   if (
     event === "INITIAL_SESSION" ||
     event === "SIGNED_OUT" ||

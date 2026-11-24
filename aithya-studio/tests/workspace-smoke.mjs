@@ -286,12 +286,28 @@ const app = createServer(async (req, res) => {
       skills:fixture.user_skills, availability:fixture.member_availability, tasks:fixture.project_tasks, milestones:fixture.milestones,
       documents:[], learning:[], activity:[], invitations:[],
     });
-    await page.route("https://ekqfotmlnqqrbcizjtfz.supabase.co/**", (route) => {
+    let profileReads = 0;
+    const mockSupabase = (route) => {
       const req = route.request(),
         url = new URL(req.url()),
         table = url.pathname.split("/").at(-1);
+      const authUser = provider => ({...metadata,app_metadata:{provider}});
+      if (table === "authorize") {
+        assert.equal(url.searchParams.get("provider"),"google");
+        assert.equal(url.searchParams.get("redirect_to"),origin + "/shared");
+        const tokens = new URLSearchParams({access_token:token,refresh_token:"stub",expires_in:"3600",token_type:"bearer",provider_token:"fake"});
+        return route.fulfill({status:302,headers:{location:origin + "/shared#" + tokens}});
+      }
+      if (table === "token" && url.searchParams.get("grant_type") === "password") {
+        assert.equal(req.postDataJSON().email,metadata.email);
+        return route.fulfill({json:{access_token:token,refresh_token:"stub",expires_in:3600,user:authUser("email")}});
+      }
+      if (table === "signup") {
+        assert.equal(url.searchParams.get("redirect_to"),origin + "/shared");
+        return route.fulfill({json:{user:authUser("email")}});
+      }
       if (url.pathname.includes("/auth/"))
-        return route.fulfill({ json: metadata });
+        return route.fulfill({ json: authUser("google") });
       if (table === "portal_project_snapshot") return route.fulfill({ json: snapshot() });
       if (table === "save_project_draft") throw Error("Setup cannot write before approval");
       if (table === "project_notification_feed") return route.fulfill({json:[{
@@ -302,6 +318,7 @@ const app = createServer(async (req, res) => {
         return route.fulfill({json:null});
       }
       if (table === "studio_account_profiles") {
+        profileReads++;
         if (req.method() === "POST") {
           savedProfile=req.postDataJSON().intake;
           return route.fulfill({status:201,body:""});
@@ -352,7 +369,33 @@ const app = createServer(async (req, res) => {
       return route.fulfill({
         json: single ? fixture[table]?.[0] || {} : fixture[table] || [],
       });
-    });
+    };
+    await page.route("https://ekqfotmlnqqrbcizjtfz.supabase.co/**",mockSupabase);
+    for (const method of ["email","google"]) {
+      const visitor = await browser.newPage();
+      try {
+        await visitor.route("https://ekqfotmlnqqrbcizjtfz.supabase.co/**",mockSupabase);
+        await visitor.goto(origin + "/");
+        await visitor.getByRole("heading",{name:"Welcome to DraftDeck"}).waitFor();
+        await visitor.getByRole("button",{name:"Continue with Google"}).waitFor();
+        await visitor.getByRole("button",{name:"Sign in with email"}).waitFor();
+        if (method === "email") {
+          await visitor.getByRole("button",{name:"Create an account"}).click();
+          await visitor.getByLabel("Email",{exact:true}).fill(metadata.email);
+          await visitor.getByLabel("Password",{exact:true}).fill("fixture-password");
+          await visitor.getByRole("button",{name:"Create account",exact:true}).click();
+          await visitor.getByText("Check your email to confirm your DraftDeck account, then sign in.").waitFor();
+          await visitor.getByLabel("Email",{exact:true}).fill(metadata.email);
+          await visitor.getByLabel("Password",{exact:true}).fill("fixture-password");
+          await visitor.getByRole("button",{name:"Sign in with email"}).click();
+        } else await visitor.getByRole("button",{name:"Continue with Google"}).click();
+        await visitor.getByRole("heading",{name:"Shared projects"}).waitFor();
+        await visitor.getByRole("button",{name:"Open project",exact:true}).waitFor();
+        assert.equal(new URL(visitor.url()).pathname,"/shared");
+        assert.equal(await visitor.title(),"DraftDeck");
+      } finally { await visitor.close(); }
+    }
+    assert.equal(profileReads,0,"Sign-in must open the dashboard before optional profile setup");
     await page.goto(origin + "/shared");
     const directory = page.getByRole("heading", {name:"Shared projects"});
     await directory.waitFor();
