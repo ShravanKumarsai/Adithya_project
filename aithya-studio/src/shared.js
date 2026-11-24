@@ -140,11 +140,17 @@ function discardDraft() {
   sessionStorage.removeItem(wizardKey());
   wizard = null;
 }
-const pendingToken = new URLSearchParams(location.hash.slice(1)).get("invite");
-if (pendingToken) {
-  sessionStorage.setItem("aithya.shared.invite", pendingToken);
+function captureInvitation() {
+  const token = new URLSearchParams(location.hash.slice(1)).get("invite");
+  if (!token) return false;
+  sessionStorage.setItem("aithya.shared.invite", token);
   history.replaceState(null, "", location.pathname + location.search);
+  return true;
 }
+captureInvitation();
+window.addEventListener("hashchange", () => {
+  if (captureInvitation()) void workspace().catch(error => notify(error.message));
+});
 document.getElementById("shared-close").onclick = () => dialog.close();
 function notify(message) {
   const target = document.getElementById("notice");
@@ -287,37 +293,90 @@ function authScreen() {
 }
 
 const profileFields = [
-  ["hackathons","Hackathons participated in"],["experience","Projects and contributions"],
-  ["roles","Previous roles"],["skills","Skills"],["interests","Roles you’d like to try"],["availability","Availability"],
+  ["roles","Previous roles"],
+  ["skills","Skills"],
+  ["experience","Projects and contributions"],
+  ["interests","Roles you’d like to try"],
+  ["availability","Availability"],
 ];
-async function openAccountInterview(saved = {}) {
-  main.innerHTML='<section class="intake-page"><header class="shared-header"><div><h1>Set up your profile</h1>' +
-    '<p>Review the skills and interests you can choose to share when you join a team.</p></div></header><div id="account-intake"></div></section>';
-  const host=document.getElementById("account-intake");
-  const edit=values=>{
-    host.innerHTML='<form id="profile-review" class="shared-form"><h2>Review your profile</h2>'+
-      profileFields.map(([key,label])=>area(key,label,values[key]||"")).join("")+
-      '<button class="button primary">Save and open dashboard</button><p role="status"></p></form>';
-    host.querySelector("form").onsubmit=async event=>{
+const skillSuggestions = ["React","Python","UI design","Data analysis","Testing","Pitching"];
+function profileComplete(profile) {
+  const count = String(profile?.hackathons ?? "").trim();
+  return Boolean(profile?.name?.trim() && profile?.skills?.trim() &&
+    /^\d{1,4}$/.test(count) && (Number(count) === 0 || profile?.roles?.trim()));
+}
+function readAccountProfile(userId) {
+  return result(db.from("studio_account_profiles").select("intake").eq("user_id",userId).maybeSingle());
+}
+async function continueWithProfile(action, purpose) {
+  const userId = session.user.id;
+  const version = generation;
+  try {
+    const record = await readAccountProfile(userId);
+    if (session?.user.id !== userId || version !== generation) return;
+    if (profileComplete(record?.intake)) return await action();
+    detachSheet();
+    detachSheet = () => {};
+    openAccountInterview(record?.intake, action, purpose);
+  } catch (error) {
+    notify(error.message);
+  }
+}
+function openAccountInterview(saved = {}, afterSave = () => navigate("/shared"), purpose = "") {
+  const account = session.user;
+  let draft = {name: account.user_metadata?.full_name || account.user_metadata?.name || "", ...saved};
+  main.innerHTML = '<section class="intake-page"><header class="shared-header"><div><h1>Set up your profile</h1><p>' +
+    (purpose ? 'Add your name, hackathon experience, and skills before you ' + escape(purpose) + '.' : 'Build your profile so you can create projects and join teams.') +
+    '</p></div></header><div class="shared-actions">' +
+    button("profile-form-mode","Fill in manually") + button("profile-chat-mode","Interview with Gemini") +
+    '</div><div id="account-intake"></div></section>';
+  const host = document.getElementById("account-intake");
+  const edit = (values = draft) => {
+    draft = { ...draft, ...values };
+    host.innerHTML = '<form id="profile-review" class="shared-form"><h2>Review your profile</h2>' +
+      field("name","Name",draft.name,"text",true) +
+      field("hackathons","Number of past hackathons",draft.hackathons ?? "","number",true) +
+      profileFields.map(([key,label])=>area(key,label,draft[key] || "") +
+        (key === "roles" ? '<p class="shared-muted">Examples include frontend developer, designer, team lead, and presenter. Leave blank if you’re new.</p>' : "") +
+        (key === "skills" ? '<div class="shared-actions" aria-label="Skill suggestions">' +
+          skillSuggestions.map((skill,i)=>button("skill-example-"+i,skill)).join("") + '</div>' : "")
+      ).join("") + '<button class="button primary">Save profile</button><p role="status"></p></form>';
+    const form = host.querySelector("form");
+    form.elements.hackathons.min = "0";
+    form.elements.hackathons.max = "9999";
+    form.elements.skills.required = true;
+    form.oninput = () => { draft = Object.fromEntries(new FormData(form)); };
+    skillSuggestions.forEach((skill, index) => bind("skill-example-"+index,()=>{
+      const skills = form.elements.skills;
+      const entries = skills.value.split(/[,\n]/).map(value=>value.trim()).filter(Boolean);
+      if (!entries.some(value=>value.toLowerCase() === skill.toLowerCase())) {
+        skills.value = [...entries,skill].join(", ");
+        form.oninput();
+      }
+    }));
+    form.onsubmit = async event => {
       event.preventDefault();
-      const submit=event.submitter;
-      const state=event.currentTarget.querySelector('[role="status"]');
-      const intake=Object.fromEntries([...new FormData(event.currentTarget)].map(([key,value])=>[key,String(value).trim().slice(0,1000)]));
-      if (!intake.skills && !intake.interests) {state.textContent="Enter a skill or a role you’d like to try.";return;}
-      submit.disabled=true;
-      state.textContent="Saving your profile…";
+      const submit = event.submitter;
+      const state = form.querySelector('[role="status"]');
+      const intake = Object.fromEntries([...new FormData(form)].map(([key,value])=>[key,String(value).trim().slice(0,key === "name" ? 160 : 500)]));
+      if (!profileComplete(intake)) {
+        state.textContent = "Enter your name, hackathon count, and at least one skill. If you’ve attended a hackathon, add a role you played.";
+        return;
+      }
+      submit.disabled = true;
+      state.textContent = "Saving your profile…";
       try {
-        await result(db.from("studio_account_profiles").upsert({user_id:session.user.id,intake},{onConflict:"user_id"}));
-        if (new URL(location.href).searchParams.get("view") === "profile")
-          await navigate("/shared");
-        else await workspace();
+        await result(db.from("studio_account_profiles").upsert({user_id:account.id,intake,saved_at:new Date().toISOString()},{onConflict:"user_id"}));
+        if (host.isConnected && session?.user.id === account.id) await afterSave();
       } catch (error) {
-        state.textContent=error.message;
-        submit.disabled=false;
+        state.textContent = error.message;
+        submit.disabled = false;
       }
     };
   };
-  mountIntakeChat(host,{db,mode:"profile",draft:saved,onReview:edit,onManual:edit});
+  bind("profile-form-mode",()=>edit());
+  bind("profile-chat-mode",()=>mountIntakeChat(host,{db,mode:"profile",draft,onReview:edit,onManual:edit}));
+  edit();
 }
 async function workspace() {
   detachSheet();
@@ -351,21 +410,18 @@ async function workspace() {
   }
   if (activeRoute === "profile") {
     main.innerHTML=skeleton("Loading your profile");
-    const profile = await db.from("studio_account_profiles").select("intake").eq("user_id",session.user.id).maybeSingle();
-    if (version !== generation) return;
-    if (!profile.error) {
-      await openAccountInterview(profile.data?.intake);
-      return;
-    }
-    if (profile.error) {
-      const setupPending = ["42P01","PGRST205"].includes(profile.error.code);
-      main.innerHTML=errorBox(setupPending ? new Error("Profile setup is still being configured. Please try again later.") : profile.error)+button("profile-retry","Retry profile");
+    try {
+      const profile = await readAccountProfile(session.user.id);
+      if (version === generation) openAccountInterview(profile?.intake, () => navigate("/shared"));
+    } catch (error) {
+      if (version !== generation) return;
+      main.innerHTML = errorBox(error) + button("profile-retry","Retry profile");
       bind("profile-retry",workspace);
-      return;
     }
+    return;
   }
   if (sessionStorage.getItem("aithya.shared.invite")) {
-    await inviteScreen();
+    await continueWithProfile(inviteScreen, "join the team");
     return;
   }
   if (activeRoute === "portfolio") {
@@ -458,11 +514,11 @@ async function workspace() {
     detachSheet = mountProjectDirectory(main, {
       projects, drafts,
       open: record => openProject(record).catch(error => notify(error.message)),
-      resume: openWizard,
-      create: fromRules => {
+      resume: draft => continueWithProfile(() => openWizard(draft), "create a project"),
+      create: fromRules => continueWithProfile(() => {
         openWizard();
         if (fromRules) document.getElementById("import-hackathon-rules").click();
-      },
+      }, "create a project"),
     });
     if (route.searchParams.get("start") === "rulebook") {
       history.replaceState(null,"","/shared");

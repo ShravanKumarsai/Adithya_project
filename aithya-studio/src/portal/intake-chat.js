@@ -1,7 +1,7 @@
 export function mountIntakeChat(host,{db,mode,draft={},onReview,onManual}) {
   const isProfile = mode === "profile";
   const opening = isProfile ?
-    "Tell me about one hackathon or class project. What did you build and what part did you own? If this is your first project, tell me what you’d like to try." :
+    "What name would you like to use on your DraftDeck profile?" :
     "What are you building? Describe the event, deadline and goal, or attach the rulebook, slides or screenshots you want me to read.";
   host.innerHTML = '<div class="intake-conversation"><div class="intake-log" role="log" aria-label="Gemini conversation"></div>' +
     '<form class="intake-compose"><label for="intake-message">Message Gemini</label>' +

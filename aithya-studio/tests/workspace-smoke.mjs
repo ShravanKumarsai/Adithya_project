@@ -186,7 +186,7 @@ const app = createServer(async (req, res) => {
     const form = await new Response(Buffer.concat(bytes),{headers:{"content-type":req.headers["content-type"]}}).formData();
     res.writeHead(200,{"content-type":"application/json"});
     if (form.get("mode") === "profile")
-      return res.end(JSON.stringify({reply:"Your React and demo experience are in the draft.",fields:{skills:"React",interests:"Demo lead"}}));
+      return res.end(JSON.stringify({reply:"Your React and demo experience are in the draft.",fields:{name:"Riya Tester",hackathons:"2",roles:"Frontend lead",skills:"React",interests:"Demo lead"}}));
     assert.equal(form.get("mode"),"project");
     assert.equal(form.get("attachment").type,"application/pdf");
     return res.end(JSON.stringify({reply:"I’ve added your prototype rule and first task.",fields:{
@@ -277,7 +277,7 @@ const app = createServer(async (req, res) => {
         ),
       { key, token, metadata, exp },
     );
-    let draft, createdTask, readEvent, savedProfile, editedTask;
+    let draft, createdTask, readEvent, savedProfile, editedTask, joined;
     let chatDrafts = 0;
     const messages = [];
     const snapshot = () => ({
@@ -324,6 +324,11 @@ const app = createServer(async (req, res) => {
           return route.fulfill({status:201,body:""});
         }
         return route.fulfill({json:savedProfile ? {intake:savedProfile} : null});
+      }
+      if (table === "accept_member_invitation" || table === "claim_studio_join_link") {
+        assert.ok(savedProfile?.name && savedProfile?.skills);
+        if (table === "claim_studio_join_link") joined = true;
+        return route.fulfill({json:{project_id:project,project_name:fixture.projects[0].name}});
       }
       if (table === "approve_studio_intake") {
         draft = req.postDataJSON().p_content;
@@ -521,6 +526,14 @@ const app = createServer(async (req, res) => {
       .getByRole("link", { name: "Shared projects", exact: true })
       .click();
     await page.getByRole("button",{name:"Create project",exact:true}).click();
+    await page.getByRole("heading",{name:"Set up your profile"}).waitFor();
+    await page.getByLabel("Number of past hackathons",{exact:true}).fill("0");
+    await page.getByRole("button",{name:"Python",exact:true}).click();
+    assert.equal(await page.getByLabel("Skills",{exact:true}).inputValue(),"Python");
+    assert.equal(draft,undefined);
+    await page.getByRole("button",{name:"Save profile",exact:true}).click();
+    await page.getByRole("heading",{name:"Project setup"}).waitFor();
+    assert.equal(savedProfile.hackathons,"0");
     await page.getByLabel("Message Gemini").fill("Read this rulebook and help me plan the project.");
     await page.getByLabel("Attach PDFs or images").setInputFiles({name:"rules.pdf",mimeType:"application/pdf",buffer:Buffer.from("%PDF fixture")});
     await page.getByRole("button",{name:"Send",exact:true}).click();
@@ -575,15 +588,30 @@ const app = createServer(async (req, res) => {
     await page.getByRole("heading", { name: "Today", exact: true }).waitFor();
     await page.getByRole("navigation",{name:"Workspace",exact:true}).getByRole("link",{name:"My profile",exact:true}).click();
     await page.getByRole("heading",{name:"Set up your profile"}).waitFor();
+    await page.getByRole("button",{name:"Interview with Gemini"}).click();
     await page.getByLabel("Message Gemini").fill("I used React to build our demo. I’d like to lead demos.");
     await page.getByRole("button",{name:"Send",exact:true}).click();
     await page.getByText("Your React and demo experience are in the draft.",{exact:true}).waitFor();
     await page.getByRole("button",{name:"Review details",exact:true}).click();
     assert.equal(await page.getByLabel("Skills",{exact:true}).inputValue(),"React");
-    assert.equal(savedProfile,undefined);
-    await page.getByRole("button",{name:"Save and open dashboard"}).click();
+    assert.equal(savedProfile.skills,"Python");
+    await page.getByRole("button",{name:"Save profile",exact:true}).click();
     await directory.waitFor();
     assert.equal(savedProfile.interests,"Demo lead");
+    savedProfile = undefined;
+    await page.goto(origin + "/shared#invite=" + "a".repeat(64));
+    await page.getByRole("heading",{name:"Set up your profile"}).waitFor();
+    await page.getByRole("button",{name:"Interview with Gemini"}).click();
+    await page.getByLabel("Message Gemini").fill("I’m Riya. Two hackathons as frontend lead. I use React.");
+    await page.getByRole("button",{name:"Send",exact:true}).click();
+    await page.getByText("Your React and demo experience are in the draft.",{exact:true}).waitFor();
+    await page.getByRole("button",{name:"Review details",exact:true}).click();
+    assert.equal(await page.getByLabel("Number of past hackathons",{exact:true}).inputValue(),"2");
+    assert.equal(joined,undefined);
+    await page.getByRole("button",{name:"Save profile",exact:true}).click();
+    await page.getByRole("button",{name:"Join project",exact:true}).click();
+    await page.waitForURL(/sheet=Team/);
+    assert.equal(joined,true);
     assert.deepEqual(errors, []);
     console.log(
       "Mobile navigation, notification routing, task mentor, Gemini attachment and profile review, bulletin, task thread, rulebook setup, plan and Today passed.",

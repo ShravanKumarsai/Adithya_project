@@ -8,7 +8,7 @@ const projectKeys = [
   "permitted_ai_tools","prohibited_ai_tools","permitted_models","privacy_restrictions","data_handling","other_requirements",
   "tasks","milestones","roles",
 ];
-const profileKeys = ["hackathons","experience","roles","skills","interests","availability"];
+const profileKeys = ["name","hackathons","experience","roles","skills","interests","availability"];
 const media = new Set(["application/pdf","image/png","image/jpeg","image/webp","image/gif"]);
 const string = { type:"string" };
 function encode(bytes) {
@@ -47,7 +47,7 @@ export async function studioIntake(request, env, url, user) {
     const keys = mode === "project" ? projectKeys : profileKeys;
     const contract = mode === "project" ?
       "Collect the project brief, rules, task titles, milestone labels, and roles. Keep optional unknown fields blank. Use ISO dates only if the source says the date unambiguously. Do not infer AI permissions. Use newline-separated lists. Only include milestones with an explicit date as YYYY-MM-DD | name." :
-      "Interview the person about hackathons, what they delivered, what skills they have, potential roles, and availability. Ask one clear followup at a time. Accept beginners and students with no experience. Only extract stated answers, except potential roles explicitly labelled as suggestions. Never request credentials, contact details or secrets.";
+      "Run a short profile interview. Ask one unanswered question at a time in this order: name, number of past hackathons, roles played, skills, an example contribution, roles of interest, and availability. Save the hackathon count as a string of digits (including 0 for a first-time participant). Accept class and personal projects, skip past roles for beginners, and suggest skills or roles as examples for the user to confirm. Save only what the person states or confirms. Once the required fields are collected, invite them to review. Never request credentials, contact details or secrets.";
     const previous = String(form.get("draft") || "{}").slice(0,12000);
     const parts = [{text:JSON.stringify({transcript,message,previous})},...await Promise.all(files.map(async file => ({
       inlineData:{mimeType:file.type,data:encode(new Uint8Array(await file.arrayBuffer()))},
