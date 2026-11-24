@@ -144,7 +144,7 @@ function authorized(headers) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
     const url = new URL(request.url);
     const user = authorized(request.headers);
     if (!user) {
@@ -153,7 +153,7 @@ export default {
     }
     if (url.pathname.startsWith('/api/ai/')) return studioAI(request,env,url,user);
     if (url.pathname === '/api/assist') return studioAssist(request,env,url,user);
-    if (url.pathname === '/api/intake') return studioIntake(request,env,url,user);
+    if (url.pathname === '/api/intake') return studioIntake(request,env,url,user,context?.verifiedAccountId);
     if (url.pathname === '/api/setup/rulebook') return setupRulebookResponse(request,env,url,user);
     if (url.pathname === '/api/planning') return planningResponse(request,env,url,user);
     if (url.pathname === '/api/github/token') return projectGeminiKeyResponse(request,env,url,'github');

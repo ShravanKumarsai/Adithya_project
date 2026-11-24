@@ -91,7 +91,7 @@ async function handle(req) {
     headers.set("apikey", supabasePublishableKey);
     return fetch(edge, {...options, redirect:"error", signal:AbortSignal.timeout(75000)});
   }
-  return worker.fetch(new Request(url, options), env);
+  return worker.fetch(new Request(url, options), env, {verifiedAccountId: account.id});
 }
 
 export default async function handler(req, res) {

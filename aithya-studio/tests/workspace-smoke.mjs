@@ -277,7 +277,7 @@ const app = createServer(async (req, res) => {
         ),
       { key, token, metadata, exp },
     );
-    let draft, createdTask, readEvent, savedProfile, editedTask, joined;
+    let draft, createdTask, readEvent, savedProfile, editedTask, joined, passwordSet;
     let chatDrafts = 0;
     const messages = [];
     const snapshot = () => ({
@@ -305,6 +305,10 @@ const app = createServer(async (req, res) => {
       if (table === "signup") {
         assert.equal(url.searchParams.get("redirect_to"),origin + "/shared");
         return route.fulfill({json:{user:authUser("email")}});
+      }
+      if (table === "user" && req.method() === "PUT") {
+        passwordSet = req.postDataJSON().password;
+        return route.fulfill({json:authUser("google")});
       }
       if (url.pathname.includes("/auth/"))
         return route.fulfill({ json: authUser("google") });
@@ -612,6 +616,18 @@ const app = createServer(async (req, res) => {
     await page.getByRole("button",{name:"Join project",exact:true}).click();
     await page.waitForURL(/sheet=Team/);
     assert.equal(joined,true);
+    await page.getByRole("navigation",{name:"Workspace",exact:true}).getByRole("link",{name:"Settings",exact:true}).click();
+    await page.getByLabel("Theme",{exact:true}).selectOption("graphite");
+    assert.equal(await page.locator("html").getAttribute("data-blueprint"),"graphite");
+    await page.reload();
+    await page.getByRole("heading",{name:"Sign-in methods"}).waitFor();
+    assert.equal(await page.locator("html").getAttribute("data-blueprint"),"graphite");
+    await page.getByRole("button",{name:"Set or change password",exact:true}).click();
+    await page.getByLabel("New password",{exact:true}).fill("same-account-test-password");
+    await page.getByLabel("Confirm password",{exact:true}).fill("same-account-test-password");
+    await page.getByRole("button",{name:"Save password",exact:true}).click();
+    await page.getByText("Password saved. You can now sign in with this email and password.").waitFor();
+    assert.equal(passwordSet,"same-account-test-password");
     assert.deepEqual(errors, []);
     console.log(
       "Mobile navigation, notification routing, task mentor, Gemini attachment and profile review, bulletin, task thread, rulebook setup, plan and Today passed.",

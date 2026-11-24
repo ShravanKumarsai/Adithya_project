@@ -1,4 +1,8 @@
-const styles = ["blueprint", "light"];
+export const themeOptions = [
+  ["light", "Light"], ["blueprint", "Blueprint"],
+  ["deep-blue", "Deep Blue Blueprint"], ["graphite", "Graphite Blueprint"],
+];
+const styles = themeOptions.map(([value]) => value);
 const accents = ["blue", "green", "amber", "rose"];
 const sizes = ["small", "medium", "large"];
 export function preferredTheme() {

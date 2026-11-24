@@ -1,6 +1,7 @@
 import {
   applyStudioAppearance,
   studioAppearance,
+  themeOptions,
 } from "./studio-appearance.js";
 const entryFields = [
   ["title", "Project or case study title", 120, true],
@@ -289,10 +290,7 @@ export async function renderPortfolio({
         select(
           "theme",
           "Theme",
-          [
-            ["light", "Light"],
-            ["blueprint", "Blueprint"],
-          ],
+          themeOptions,
           appStyle.theme,
         ) +
           select(

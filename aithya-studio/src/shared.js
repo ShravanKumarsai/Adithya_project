@@ -4,7 +4,7 @@ import { deadlineLabel, sections } from "./portal/routes.js";
 import { updateProjectStatus } from "./portal/status.js";
 import { button, escape, skeleton } from "./studio-ui.js";
 import { collectWizardPolicy } from "./wizard-policy.js";
-import {applyStudioAppearance,preferredTheme,studioAppearance} from "./studio-appearance.js";
+import {applyStudioAppearance,preferredTheme,studioAppearance,themeOptions} from "./studio-appearance.js";
 import {mountReport} from "./studio-report.js";
 import {studioSkills} from "./assist-contract.js";
 import { todayView } from "./project-insights.js";
@@ -25,7 +25,7 @@ function loadLegacyFonts() {
 }
 function setTheme(theme, remember = false){
   applyStudioAppearance({...studioAppearance(),theme}, {remember});
-  if (theme === "blueprint" || theme === "light") loadLegacyFonts();
+  loadLegacyFonts();
 }
 function applyRouteTheme(inProject) {
   document.documentElement.dataset.studioView = inProject ? "project" : "directory";
@@ -236,7 +236,7 @@ function authScreen() {
   const title = recovery ? "Choose a new password" : reset ? "Reset your password" : signup ? "Create your DraftDeck account" : "Welcome to DraftDeck";
   const submitLabel = recovery ? "Update password" : reset ? "Send reset link" : signup ? "Create account" : "Sign in with email";
   main.innerHTML = '<section class="auth-panel"><h1>' +
-    title + '</h1>' +
+    title + '</h1>' + (signup ? '<p class="shared-muted">Already use Google? Sign in with Google and add a password from Settings.</p>' : '') +
     (login ? '<div class="shared-actions">' + button("google-login", "Continue with Google", true) + '</div>' : '') +
     '<form id="auth-form" class="shared-form">' +
     (!recovery ? field("email","Email","","email",true) : "") +
@@ -432,9 +432,21 @@ async function workspace() {
   if (activeRoute === "settings") {
     main.innerHTML = '<header class="shared-header"><h1>Settings</h1></header>' +
       '<section class="bp-panel"><h2>Appearance</h2>' +
-      select("global-theme", "Theme", [["light","Light"],["blueprint","Blueprint"]], studioAppearance().theme) +
-      '</section>';
+      select("global-theme", "Theme", themeOptions, document.documentElement.dataset.blueprint) +
+      '</section><section class="bp-panel"><h2>Sign-in methods</h2><p>' + escape(session.user.email || "") +
+      '</p><p>Set a password to sign in to this account with your email.</p>' +
+      (session.user.email ? button("set-account-password","Set or change password") : "") + '</section>';
     document.getElementById("f-global-theme").onchange = (event) => setTheme(event.target.value,true);
+    bind("set-account-password",()=>modal("Set or change password",
+      field("password","New password","","password",true) +
+      field("confirm-password","Confirm password","","password",true),
+      async form => {
+        const password = String(form.get("password") || "");
+        if(password.length < 10) throw Error("Use at least 10 characters.");
+        if(password !== form.get("confirm-password")) throw Error("Passwords do not match.");
+        await result(db.auth.updateUser({password}));
+        notify("Password saved. You can now sign in with this email and password.");
+      }, workspace, "Save password"));
     return;
   }
   main.innerHTML = skeleton("Loading your workspace");

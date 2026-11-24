@@ -77,6 +77,26 @@ test("project intake forwards a selected PDF, keeps approved field names, and re
   assert.equal(Buffer.from(file.data,"base64").toString(),"%PDF fixture");
 });
 
+test("profile interview accepts a combined answer over the trusted Vercel call", async (t) => {
+  const fields = {name:"Sam",hackathons:"2",roles:"Designer",skills:"Figma, React",availability:""};
+  const outbound = t.mock.method(globalThis,"fetch",async (url,init) => {
+    assert.equal(new URL(url).hostname,"generativelanguage.googleapis.com");
+    const body = JSON.parse(init.body);
+    assert.match(body.contents[0].parts[0].text,/two hackathons as designer/);
+    assert.equal(body.generationConfig.thinkingConfig.thinkingLevel,"MINIMAL");
+    return providerDraft({reply:"I captured your profile details.",fields});
+  });
+  const endpoint = new URL(host + "/api/intake");
+  const body = new FormData();
+  body.set("mode","profile");
+  body.set("message","I’m Sam, did two hackathons as designer, and use Figma and React.");
+  const response = await studioIntake(new Request(endpoint,{method:"POST",body,
+    headers:{origin:host,authorization:"Bearer fixture"}}),{DB:fakeDB(),GEMINI_SETUP_API_KEY:"test-only"},endpoint,user,user.id);
+  assert.equal(response.status,200);
+  assert.equal(outbound.mock.callCount(),1);
+  assert.deepEqual((await response.json()).fields,fields);
+});
+
 test("report commit span uses the hackathon window and all returned pages", async (t) => {
   const windows = [];
   t.mock.method(globalThis,"fetch",async input => {

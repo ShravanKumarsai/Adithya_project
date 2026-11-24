@@ -1236,3 +1236,35 @@ body :is(a,button,input,textarea,select,summary):focus-visible {
 .delivery-record {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:.75rem}
 .delivery-record dt {color:var(--muted);font-size:.9rem}
 .delivery-record dd {margin:0;font-weight:600;overflow-wrap:anywhere}
+
+:root[data-blueprint=deep-blue] {
+  --page:#071323;--panel:#0d1d34;--raised:#122642;--recess:#0a192e;--lit:#203a5e;
+  --text:#e9f3ff;--muted:#a8bcd8;--line:#304c70;--edge:#5278a3;
+  --grid:117,173,227;--minor:.07;--major:.15;--glow:#173a69;
+}
+:root[data-blueprint=graphite] {
+  --page:#111416;--panel:#171d1f;--raised:#20282a;--recess:#14191b;--lit:#29383a;
+  --text:#edf5f4;--muted:#b0c0c2;--line:#354b50;--edge:#5d7c81;
+  --grid:148,189,185;--minor:.06;--major:.14;--glow:#233c3e;
+}
+:root[data-blueprint=deep-blue][data-accent=blue] {--accent:#b4d7ff;--ink:#0a1b32}
+:root[data-blueprint=graphite][data-accent=blue] {--accent:#b0e2d7;--ink:#122623}
+:root:is([data-blueprint=deep-blue],[data-blueprint=graphite]) body {
+  color-scheme:dark;
+  background-image:linear-gradient(rgba(var(--grid),var(--minor)) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(var(--grid),var(--minor)) 1px,transparent 1px),
+    linear-gradient(rgba(var(--grid),var(--major)) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(var(--grid),var(--major)) 1px,transparent 1px),
+    radial-gradient(ellipse 58rem 45rem at 68% 0,var(--glow),transparent 74%);
+  background-size:24px 24px,24px 24px,120px 120px,120px 120px,100% 100%;
+}
+:root:is([data-blueprint=deep-blue],[data-blueprint=graphite]) .shared-main :is(h1,h2) {
+  font-family:var(--display);
+  letter-spacing:-.025em;
+}
+:root:is([data-blueprint=deep-blue],[data-blueprint=graphite]) :is(.portal-head,.hero-timeline,.intake-compose) {
+  border:1px solid var(--line);
+  background:linear-gradient(150deg,var(--raised),var(--panel));
+}
+.intake-facts {display:flex;flex-wrap:wrap;gap:.4rem;padding:0;margin:.65rem 0;list-style:none}
+.intake-facts li {color:var(--text);background:var(--recess);border:1px solid var(--line);border-radius:.45rem;padding:.22rem .5rem;overflow-wrap:anywhere;max-width:100%}
