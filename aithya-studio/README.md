@@ -1,8 +1,51 @@
-# Aithya Studio
+# DraftDeck
 
-The repository activity workspace is at `/`. The Supabase shared workspace is at `/shared`.
+[Open the live app](https://adithya-project.vercel.app/shared) · [Deployed application source](https://github.com/ShravanKumarsai/Adithya_project/commit/aa2c669efd99e00d8dbcc065ec34bd893d1b4c78)
 
-## Build
+DraftDeck helps hackathon teams go from a rulebook to a reviewed plan, a working build, and a final contribution report.
+
+## Walkthrough
+
+| Area | What to try |
+| --- | --- |
+| Shared projects and My profile | Sign in with Google or email and password. Complete one profile manually or with Gemini, then create a project or join with an invitation. |
+| Rules | Paste rules or upload a supported PDF or image. Review extracted requirements, judging criteria, milestones, and AI rules before saving. |
+| Today and Overview | Check blockers, deadlines, and readiness. The hackathon clock counts down in IST. Time used follows elapsed time, and Work done follows completed tasks. |
+| Work | Plan and assign tasks, set priorities and dependencies, track milestones, and review suggestions from the AI Mentor. Activity shows commits and deployments when GitHub and Vercel are connected. |
+| Team | Use the bulletin, group chat, or private threads to share files, run polls, and propose work changes. Chat shows a Team lead badge. |
+| Submit | Review submission evidence in Ship Check. After the deadline, the lead can publish a report to participants’ portfolios. Deletion requires the saved report and exact project name. Participants keep their reports. |
+
+Only the project lead can add or replace the team Gemini key. Accepted teammates can see the daily DraftDeck request allowance and reset time in the project header. This counter measures DraftDeck requests. Personal Codex and Claude Code connections are available per project using local connectors. One-time account-wide pairing requires a production migration that has yet to be applied.
+
+## Run locally
+
+From this folder, use Node.js 24 and npm.
+
+```sh
+npm ci
+npm run dev
+```
+
+Open http://localhost:4173/shared. The local server serves static assets. Use the hosted app for the complete backend experience. The browser tests exercise authenticated workflows with fixtures.
+
+## Deployment and checks
+
+The repository includes the package manifest and lockfile, Vercel configuration, and Supabase migrations. Vercel builds with `npm run build:static` and serves `public-vercel`. A separate deployment needs its own configured Supabase environment and server-side settings. Store `AITHYA_DATABASE_URL`, `PROJECT_GEMINI_KEY_SECRET`, and, for guided onboarding and rulebook scanning, `GEMINI_SETUP_API_KEY` in the host’s environment settings. Keep real credentials out of Git.
+
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build:static
+npx playwright install chromium
+npm run test:browser
+```
+
+## Development and release history
+
+The notes below describe earlier implementation stages. Use the setup and feature summary above for the submitted release.
+
+### Build
 
 Run `npm ci` and `npm run build`. The build bundles the shared frontend and embeds the web assets into the Sites Worker at `dist/server/index.js`.
 
