@@ -13,13 +13,15 @@ alter table public.project_members add column onboarding_role_suggestion text;
 
 alter table public.project_tasks add column priority text not null default 'normal'
   check (priority in ('urgent','high','normal','low'));
-alter table public.projects add column intake_roles text[] not null default '{}',
+alter table public.projects add column if not exists intake_roles text[] not null default '{}',
   add column studio_intake_applied boolean not null default false;
 
-create function public.approve_studio_intake(p_id uuid, p_content jsonb, p_revision integer)
+create or replace function public.approve_studio_intake(p_id uuid, p_content jsonb, p_revision integer)
 returns uuid language plpgsql security invoker set search_path='' as $$
 declare project uuid; applied uuid; drafts jsonb := p_content->'work';
 begin
+  select d.published_project_id into project from public.project_drafts d where d.id=p_id and d.user_id=(select auth.uid());
+  if project is not null then return project; end if;
   project := public.approve_portal_project(p_id,p_content,p_revision);
   update public.projects p set
     studio_intake_applied=true,
