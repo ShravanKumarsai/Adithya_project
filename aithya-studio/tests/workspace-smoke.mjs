@@ -434,7 +434,22 @@ const app = createServer(async (req, res) => {
       await page.screenshot({path:process.env.PORTAL_SCREENSHOTS + "/shared-projects-desktop.png", fullPage:true});
       await page.setViewportSize({width:360,height:820});
     }
+    let geminiConfigured = false;
+    await page.route("**/api/usage?*",route=>route.fulfill({json:{configured:geminiConfigured,remaining:50}}));
+    await page.route("**/api/planning/key?*",route=>{
+      if (route.request().method() !== "PUT") return route.fallback();
+      assert.equal(new URL(route.request().url()).searchParams.get("projectId"),project);
+      assert.deepEqual(route.request().postDataJSON(),{key:"fixture-gemini-key"});
+      geminiConfigured = true;
+      return route.fulfill({json:{configured:true}});
+    });
     await page.getByRole("button", {name:"Open project", exact:true}).click();
+    await page.getByRole("button",{name:"Gemini · Add team key",exact:true}).click();
+    const keyDialog = page.getByRole("dialog",{name:"Save Gemini key"});
+    await keyDialog.getByLabel("Gemini API key",{exact:true}).fill("fixture-gemini-key");
+    await keyDialog.getByRole("button",{name:"Save key",exact:true}).click();
+    await page.getByText("Gemini · 50 left today",{exact:true}).waitFor();
+    assert.equal(geminiConfigured,true);
     assert.equal(await page.locator("html").getAttribute("data-blueprint"), "light");
     const navigation = page.getByRole("navigation", {name:"Project areas"});
     await navigation.waitFor({timeout:8000}).catch(async error => { console.error(errors, await page.locator("body").innerText()); throw error; });

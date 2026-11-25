@@ -1121,7 +1121,19 @@ async function renderProject() {
   const {mountProjectShell} = await import("./portal/ProjectShell.tsx");
   if (!host.isConnected) return;
   panel.replaceChildren();
-  const shell = mountProjectShell(host, { project, sheet:tab, available:tabs, open:showProjectSheet });
+  const shell = mountProjectShell(host, { project, sheet:tab, available:tabs, open:showProjectSheet,
+    addTeamKey: leader() && !project.archived_at ? () => {
+      import("./personal-studio.js").then(({openProjectConnectionKey}) => {
+        if (!host.isConnected) return;
+        openProjectConnectionKey({tool:"Gemini",projectId:project.id,session,modal,
+          refresh: async () => {
+            notify("Gemini key saved for this project.");
+            if (host.isConnected) await loadProject();
+          },
+        });
+      }).catch(error => notify(error.message));
+    } : undefined,
+  });
   const unreadKey = "chat-count-" + session.user.id + project.id;
   if (view === "Chat") sessionStorage.removeItem(unreadKey);
   shell.update({unread:Number(sessionStorage.getItem(unreadKey) || 0)});

@@ -14,10 +14,10 @@ const labels: Record<string, string> = {
 const visibleTools: Record<string, number> = {Today:3, Work:3, Team:3, Rules:2, Submit:3};
 
 type Project = { id: string; name: string; hackathon_name?: string; submission_deadline?: string };
-type Status = { usage?: string; usageReset?: string; sources?: string; unread?: number };
-type Props = { project: Project; sheet: string; available: string[]; open: (sheet: string) => void };
+type Status = { usage?: string; usageReset?: string; sources?: string; unread?: number; needsGeminiKey?: boolean };
+type Props = { project: Project; sheet: string; available: string[]; open: (sheet: string) => void; addTeamKey?: () => void };
 
-function ProjectShell({ project, sheet, available, open, status }: Props & { status: Status }) {
+function ProjectShell({ project, sheet, available, open, addTeamKey, status }: Props & { status: Status }) {
   const entries = Object.entries(sections);
   const area = entries.find(([, views]) => (views as readonly string[]).includes(sheet));
   const tools = area?.[1].filter(view => available.includes(view) && !(area[0] === 'Work' && view === 'AI mentor')) || [];
@@ -42,9 +42,13 @@ function ProjectShell({ project, sheet, available, open, status }: Props & { sta
         </div>
         <div className="portal-head-controls">
           <p className="portal-header-deadline">{deadlineLabel(project.submission_deadline)}</p>
+          {status.needsGeminiKey && addTeamKey && (
+            <button className="button subtle" type="button" onClick={addTeamKey}>Gemini · Add team key</button>
+          )}
           <details className="portal-usage">
-            <summary className="button subtle">{status.usage || 'AI usage'}</summary>
-            <p>Gemini studio requests{status.usageReset ? " · Resets " + status.usageReset : ""}</p>
+            <summary className="button subtle">{status.needsGeminiKey && addTeamKey ? 'AI usage' : status.usage || 'AI usage'}</summary>
+            <p>{status.needsGeminiKey ? 'The project lead manages the team Gemini key.' :
+              'Gemini studio requests' + (status.usageReset ? ' · Resets ' + status.usageReset : '')}</p>
             <div className="shared-actions">
               {available.includes('AI credits') && link('AI credits', 'Provider credits')}
               {available.includes('Settings') && link('Settings', 'Connection settings')}

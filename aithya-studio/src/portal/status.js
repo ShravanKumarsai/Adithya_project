@@ -1,5 +1,9 @@
 const requests = new Map();
 
+export function invalidateProjectUsage(projectId, userId) {
+  requests.delete(userId + ":" + encodeURIComponent(projectId));
+}
+
 async function check(path, token) {
   const response = await fetch(path, {
     headers: {authorization: "Bearer " + token},
@@ -20,7 +24,8 @@ export async function updateProjectStatus(project, session, ui, view, valid) {
   }
   entry.usage ||= check("/api/usage?project=" + projectId, session.access_token)
     .then(data => ({
-      usage:data.configured ? "Gemini · " + data.remaining + " left today" : "Gemini · Add team key",
+      usage:data.configured ? "Gemini · " + data.remaining + " left today" : "Gemini · Team key needed",
+      needsGeminiKey:data.configured === false,
       usageReset:data.resetsAt ? new Date(data.resetsAt).toLocaleString(undefined,{dateStyle:"short",timeStyle:"short"}) : undefined,
     })).catch(() => ({usage:"AI usage"}));
   if (["Board", "AI plan", "Ship check", "Activity"].includes(view)) {

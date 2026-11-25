@@ -1,3 +1,5 @@
+import { invalidateProjectUsage } from "./portal/status.js";
+
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -76,6 +78,35 @@ const activeUsed = (account, now = Date.now()) =>
 const available = (account) =>
   Math.max(0, account.allowance - activeUsed(account));
 const rank = { beginner: 1, intermediate: 3, advanced: 4, expert: 5 };
+
+const connectionEndpoints = {
+  Gemini: "/api/planning/key",
+  GitHub: "/api/github/token",
+  Vercel: "/api/vercel/token",
+};
+async function projectConnection(projectId, session, tool, method = "GET", key, check = false) {
+  const query = new URLSearchParams({projectId});
+  if (check) query.set("test", "1");
+  const response = await fetch(connectionEndpoints[tool] + "?" + query, {
+    method,
+    headers: {authorization: "Bearer " + session.access_token, "content-type": "application/json"},
+    body: key === undefined ? undefined : JSON.stringify({key}),
+  });
+  const status = await response.json();
+  if (!response.ok) throw Error(status.error || "Could not open integration.");
+  if (tool === "Gemini" && method !== "GET") invalidateProjectUsage(projectId, session.user.id);
+  return status;
+}
+
+export function openProjectConnectionKey({tool, projectId, session, modal, refresh}) {
+  modal("Save " + tool + " key",
+    field("key", tool + " API key", "", "password", 'required autocomplete="off" autofocus maxlength="256"'),
+    async form => {
+      const key = String(form.get("key") || "").trim();
+      if (!key) throw Error("Enter an API key.");
+      await projectConnection(projectId, session, tool, "PUT", key);
+    }, refresh, "Save key");
+}
 
 export function mountPersonalStudio(ctx) {
   const {
@@ -1139,28 +1170,7 @@ export function mountPersonalStudio(ctx) {
       }catch(e){notify(e.message)}finally{submit.disabled=false}
     };
   }
-  const endpoint = {
-    Gemini: "/api/planning/key",
-    GitHub: "/api/github/token",
-    Vercel: "/api/vercel/token",
-  };
-  async function connection(tool, method = "GET", key, check = false) {
-    const response = await fetch(
-      endpoint[tool] + "?projectId=" + id + (check ? "&test=1" : ""),
-      {
-        method,
-        headers: {
-          authorization: "Bearer " + session.access_token,
-          "content-type": "application/json",
-        },
-        body: key ? JSON.stringify({ key }) : undefined,
-      },
-    );
-    const status = await response.json();
-    if (!response.ok)
-      throw Error(status.error || "Could not open integration.");
-    return status;
-  }
+  const connection = (tool, method, key, check) => projectConnection(id, session, tool, method, key, check);
   async function settings() {
     await loadDetails();
     if (!root.isConnected) return;
@@ -1209,7 +1219,7 @@ export function mountPersonalStudio(ctx) {
       bind("repository", editConnections);
       bind("policy", editPolicy);
       const items = await Promise.all(
-        Object.keys(endpoint).map(async (tool) => [
+        Object.keys(connectionEndpoints).map(async (tool) => [
           tool,
           await connection(tool).catch(() => null),
         ]),
@@ -1245,19 +1255,7 @@ export function mountPersonalStudio(ctx) {
         )
         .join("");
       for (const [tool] of items) {
-        bind("key-" + tool, () =>
-          form(
-            "Save " + tool + " key",
-            field(
-              "key",
-              tool + " API key",
-              "",
-              "password",
-              'required autocomplete="new-password" maxlength="256"',
-            ),
-            (f) => connection(tool, "PUT", f.get("key").trim()),
-          ),
-        );
+        bind("key-" + tool, () => openProjectConnectionKey({tool, projectId:id, session, modal, refresh}));
         bind("test-" + tool, async () => {
           await connection(tool, "GET", undefined, true);
           notify(tool + " connection verified.");
