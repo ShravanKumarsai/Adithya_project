@@ -26,6 +26,7 @@ export async function updateProjectStatus(project, session, ui, view, valid) {
     .then(data => ({
       usage:data.configured ? "Gemini · " + data.remaining + " left today" : "Gemini · Team key needed",
       needsGeminiKey:data.configured === false,
+      teamUsage:data.configured && Number.isFinite(data.used) && Number.isFinite(data.limit) ? `${data.used} of ${data.limit} team requests used today` : undefined,
       usageReset:data.resetsAt ? new Date(data.resetsAt).toLocaleString(undefined,{dateStyle:"short",timeStyle:"short"}) : undefined,
     })).catch(() => ({usage:"AI usage"}));
   if (["Board", "AI plan", "Ship check", "Activity"].includes(view)) {

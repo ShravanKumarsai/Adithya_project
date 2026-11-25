@@ -16,15 +16,14 @@ export async function projectUsage(request, env, url, account) {
     if (!access.ok) return json({error:"Project access could not be checked."}, access.status);
     if (!(await access.json()).length) return json({error:"Project unavailable."}, 404);
     const day = new Date().toISOString().slice(0,10);
-    const [key, member, team] = await Promise.all([
+    const [key, team] = await Promise.all([
       projectGeminiKey(env, id),
-      env.DB.prepare("SELECT attempts FROM planning_rate WHERE account_id=? AND day=?").bind("assist-user:" + account.id, day).first(),
       env.DB.prepare("SELECT attempts FROM planning_rate WHERE account_id=? AND day=?").bind("assist-project:" + id, day).first(),
     ]);
-    return json({configured:Boolean(key), resetsAt:new Date(Date.parse(day+"T00:00:00Z")+86400000).toISOString(), remaining:Math.max(0, Math.min(
-      dailyLimits.assistUser - Number(member?.attempts || 0),
-      dailyLimits.assistProject - Number(team?.attempts || 0),
-    ))});
+    const limit = dailyLimits.assistProject;
+    const used = Math.min(limit,Math.max(0,Number(team?.attempts || 0)));
+    return json({configured:Boolean(key), used, limit, remaining:limit-used,
+      resetsAt:new Date(Date.parse(day+"T00:00:00Z")+86400000).toISOString()});
   } catch {
     return json({error:"Usage is temporarily unavailable."}, 503);
   }

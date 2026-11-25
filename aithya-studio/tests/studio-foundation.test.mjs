@@ -259,7 +259,8 @@ test("planning refunds invalid output and keeps a completed draft charged", asyn
   assert.equal(usage(caps), 0);
   output = valid;
   assert.deepEqual((await (await call()).json()).plan, normalizePlan(valid));
-  assert.equal(usage(caps), 1);
+  assert.equal(usage(caps), 2);
+  assert.equal([...caps].find(([key]) => key.startsWith("assist-project:" + projectId))?.[1], 1);
   assert.equal(
     permittedGeminiModel(
       { ...policy, prohibited_ai_tools: ["Gemini"] },

@@ -1,4 +1,5 @@
 import { localThreadDraft } from "./portal/thread-evidence.js";
+import { projectDeadline as dateEnd } from "./portal/routes.js";
 import { updateTask } from "./portal/status.js";
 import {mountFinalTools} from "./final-workspace.js";
 import { mountPersonalStudio } from "./personal-studio.js";
@@ -65,7 +66,7 @@ const panel = (title, html) =>
 const bar = (name, n, max, unit = "", kind = "") =>
   '<div class="bp-bar"><span>' +
   esc(name) +
-  '</span><progress class="' +
+  '</span><progress aria-label="' + esc(name) + '" class="' +
   kind +
   '" value="' +
   Number(n) +
@@ -77,7 +78,6 @@ const bar = (name, n, max, unit = "", kind = "") =>
 const input = (el, key) =>
   el.querySelector('[name="' + key + '"]')?.value.trim() || "";
 const day = 86400000;
-const dateEnd = (d) => (d ? new Date(d + "T23:59:59+05:30").getTime() : NaN);
 const bestSkill = (t) =>
   /pitch|present|demo/i.test(t)
     ? "Pitching"
@@ -173,9 +173,10 @@ export function mountBlueprint(ctx) {
   const name = (id) =>
     team.find((m) => m.user_id === id)?.full_name || "Unassigned";
   const uid = session.user.id;
+  const weeklyHours = d.availability.reduce((s, a) => s + Number(a.weekly_hours), 0);
   const metric = pace(
     d.tasks,
-    d.availability.reduce((s, a) => s + Number(a.weekly_hours), 0),
+    weeklyHours,
     dateEnd(p.submission_deadline),
   );
   const memberOptions = team.map((m) => [m.user_id, m.full_name]);
@@ -383,16 +384,17 @@ export function mountBlueprint(ctx) {
       )
     );
   }
+  let clockTasks = d.tasks;
+  const startTime = () => p.start_date ? Date.parse(p.start_date + "T00:00:00+05:30") : Date.parse(p.created_at);
   function milestoneStrip() {
-    const start = Date.parse(p.start_date || p.created_at.slice(0, 10)),
-      finish = Date.parse(p.submission_deadline || "");
+    const start = startTime(), finish = dateEnd(p.submission_deadline);
     if (!(finish > start)) return "";
     const x = (date) =>
       18 + 464 * Math.max(0, Math.min(1, (date - start) / (finish - start)));
     const today = x(Date.now()),
       items = milestones
         .filter(
-          (m) => Date.parse(m.due) >= start && Date.parse(m.due) <= finish,
+          (m) => dateEnd(m.due) >= start && dateEnd(m.due) <= finish,
         )
         .slice()
         .sort((a, b) => a.due.localeCompare(b.due))
@@ -402,18 +404,18 @@ export function mountBlueprint(ctx) {
       today +
       '" x2="' +
       today +
-      '" y1="8" y2="45" class="today-mark"></line>' +
+      '" y1="8" y2="45" data-clock-marker class="today-mark"></line>' +
       items
         .map(
           (m, i) =>
             "<g><title>" +
             esc(m.name + " · " + m.due) +
             '</title><circle cx="' +
-            x(Date.parse(m.due)) +
+            x(dateEnd(m.due)) +
             '" cy="30" r="9" class="' +
             (m.done ? "completed" : "planned") +
             '"></circle><text x="' +
-            x(Date.parse(m.due)) +
+            x(dateEnd(m.due)) +
             '" y="33" text-anchor="middle">' +
             (i + 1) +
             "</text></g>",
@@ -421,75 +423,63 @@ export function mountBlueprint(ctx) {
         .join("") +
       "</svg>" +
       "<figcaption><span>" +
-      esc(p.start_date || p.created_at.slice(0, 10)) +
+      esc(p.start_date || p.created_at?.slice(0, 10)) +
       "</span><span>Dashed line · Today</span><span>" +
       esc(p.submission_deadline) +
       "</span></figcaption></figure>"
     );
   }
   function clock() {
-    const end = dateEnd(p.submission_deadline),
-      start = new Date(
-        (p.start_date || p.created_at.slice(0, 10)) + "T00:00:00+05:30",
-      ).getTime();
-    const elapsed =
-      Number.isFinite(end) && end > start
-        ? Math.round(
-            Math.min(1, Math.max(0, (Date.now() - start) / (end - start))) *
-              100,
-          )
-        : null;
-    const completion = metric.total
-      ? Math.round((100 * metric.done) / metric.total)
-      : 0;
-    const needed = metric.days
-      ? Math.round((metric.left / metric.days) * 10) / 10
-      : metric.left;
-    return panel(
-      "Hackathon clock",
-      '<strong class="bp-time" data-clock></strong><p>' +
-        esc(metric.risk) +
-        " · " +
-        needed +
-        " h/day needed · " +
-        (
-          d.availability.reduce((s, a) => s + Number(a.weekly_hours), 0) / 7
-        ).toFixed(1) +
-        " h/day available</p>" +
-        milestoneStrip() +
-        (elapsed !== null
-          ? bar("Time used", elapsed, 100, "%") +
-            bar("Work done", completion, 100, "%", "done") +
-            "<p>" +
-            esc(
-              completion >= elapsed
-                ? "On pace"
-                : elapsed - completion <= 15
-                  ? "Slightly behind"
-                  : "Behind the clock",
-            ) +
-            "</p>"
-          : "Set start and submission dates in Project setup.") +
-        "",
-    );
+    return panel("Hackathon clock",
+      '<strong class="bp-time" data-clock></strong><p data-clock-risk></p>' + milestoneStrip() +
+      '<div data-clock-meters></div><div data-clock-finish hidden>' +
+      (leader && !p.archived_at ? btn("clock-final-report","Open final report") : "") + '</div>');
   }
+  let displayedMeters = "";
   function tick() {
     const n = root.querySelector("[data-clock]");
     if (!n) return;
-    const deadline = dateEnd(p.submission_deadline);
-    let s = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
-    n.textContent = !Number.isFinite(s)
-      ? "Set deadline"
-      : s === 0
-        ? "Deadline reached"
-        : Math.floor(s / 86400) +
-          "d " +
-          Math.floor((s % 86400) / 3600) +
-          "h " +
-          Math.floor((s % 3600) / 60) +
-          "m " +
-          (s % 60) +
-          "s";
+    const now = Date.now(), deadline = dateEnd(p.submission_deadline), start = startTime();
+    const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
+    n.textContent = !Number.isFinite(seconds) ? "Set deadline" : seconds === 0 ? "Deadline reached" :
+      Math.floor(seconds / 86400) + "d " + Math.floor(seconds % 86400 / 3600) + "h " +
+      Math.floor(seconds % 3600 / 60) + "m " + seconds % 60 + "s";
+    const progress = pace(clockTasks,weeklyHours,deadline,now);
+    root.querySelector("[data-clock-risk]").textContent = progress.days ? progress.risk + " · " +
+      (progress.left / progress.days).toFixed(1) + " h/day needed · " + (weeklyHours/7).toFixed(1) + " h/day available" :
+      Number.isFinite(deadline) ? progress.left + " estimated hours of work remaining" : "Set a deadline to calculate pace.";
+    const elapsed = deadline > start ? Math.max(0, Math.min(1, (now - start) / (deadline - start))) : null;
+    const done = clockTasks.filter(task => task.status === "done").length;
+    const work = clockTasks.length ? Math.round(100 * done / clockTasks.length) : 0;
+    const used = elapsed === null ? null : Math.round(100 * elapsed);
+    const meters = (used === null ? "<p>Set a valid start and submission date.</p>" : bar("Time used",used,100,"%")) +
+      bar("Work done",work,100,"%","done") + "<p>" + done + " of " + clockTasks.length + " tasks completed</p>";
+    if (meters !== displayedMeters) {
+      root.querySelector("[data-clock-meters]").innerHTML = meters;
+      displayedMeters = meters;
+    }
+    const marker = root.querySelector("[data-clock-marker]");
+    if (marker && elapsed !== null) {
+      const x = 18 + 464 * elapsed;
+      marker.setAttribute("x1",x);
+      marker.setAttribute("x2",x);
+    }
+    root.querySelector("[data-clock-finish]").hidden = !Number.isFinite(deadline) || deadline > now;
+  }
+  let checkingClock = false;
+  async function refreshClockTasks() {
+    if (checkingClock || !root.isConnected || document.hidden) return;
+    checkingClock = true;
+    try {
+      const rows = await result(db.from("project_tasks").select("status,estimated_hours").eq("project_id",p.id));
+      if (!root.isConnected) return;
+      clockTasks = rows;
+      tick();
+    } catch {
+      // Retain the last known progress when the workspace is temporarily offline.
+    } finally {
+      checkingClock = false;
+    }
   }
   const evidence = p.submission_evidence || {};
   const checklist = ["Tests", "README", "Demo video"];
@@ -1070,6 +1060,7 @@ export function mountBlueprint(ctx) {
             (m.author_id === uid ? "mine" : "theirs") +
             '"><small>' +
             esc(m.author_id === uid ? "You" : name(m.author_id)) +
+            (m.author_id === p.leader_id ? ' <span class="chat-lead">Team lead</span>' : "") +
             " · " +
             esc(
               new Date(m.created_at).toLocaleTimeString([], {
@@ -1866,9 +1857,13 @@ export function mountBlueprint(ctx) {
     draft,
     studioSkills,
   });
-  if (root.querySelector("[data-clock]")) {
+  const hasClock = Boolean(root.querySelector("[data-clock]"));
+  let clockPoll;
+  if (hasClock) {
+    bind("clock-final-report",()=>openSheet("Report"));
     tick();
     timer = setInterval(tick, 1000);
+    clockPoll = setInterval(refreshClockTasks, 15000);
   }
   const channelName = "studio-" + p.id + "-" + crypto.randomUUID();
   channel = db.channel(channelName).on(
@@ -1905,9 +1900,11 @@ export function mountBlueprint(ctx) {
         () => readChat().catch((e) => notify(e.message)),
       );
   }
+  if (hasClock) channel.on("postgres_changes",{event:"*",schema:"public",table:"project_tasks",filter:"project_id=eq."+p.id},refreshClockTasks);
   channel.subscribe();
   return () => {
     clearInterval(timer);
+    clearInterval(clockPoll);
     detachFinal();
     detachPersonal();
     db.removeChannel(channel);

@@ -1268,3 +1268,5 @@ body :is(a,button,input,textarea,select,summary):focus-visible {
 }
 .intake-facts {display:flex;flex-wrap:wrap;gap:.4rem;padding:0;margin:.65rem 0;list-style:none}
 .intake-facts li {color:var(--text);background:var(--recess);border:1px solid var(--line);border-radius:.45rem;padding:.22rem .5rem;overflow-wrap:anywhere;max-width:100%}
+
+.chat-lead {display:inline-block;margin-inline:.35em;padding:.08em .4em;border:1px solid var(--line);border-radius:.35em;background:var(--raised);color:var(--text);font-weight:650}

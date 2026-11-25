@@ -454,6 +454,8 @@ const app = createServer(async (req, res) => {
     const navigation = page.getByRole("navigation", {name:"Project areas"});
     await navigation.waitFor({timeout:8000}).catch(async error => { console.error(errors, await page.locator("body").innerText()); throw error; });
     await page.getByText("Hackathon clock",{exact:true}).waitFor();
+    await page.getByRole("progressbar",{name:"Time used",exact:true}).waitFor();
+    await page.getByRole("progressbar",{name:"Work done",exact:true}).waitFor();
     await page.getByText("Deadline risk",{exact:true}).waitFor();
     if (process.env.PORTAL_SCREENSHOTS) {
       await page.screenshot({path:process.env.PORTAL_SCREENSHOTS + "/overview-mobile.png",fullPage:true});
@@ -518,6 +520,7 @@ const app = createServer(async (req, res) => {
     await navigation.getByRole("link", {name:"Team", current:"page"}).waitFor();
     await page.getByLabel("Share a team update").fill("Blocked on the API contract");
     await page.getByRole("button", {name:"Post update"}).click();
+    await page.getByText("Blocked on the API contract",{exact:true}).waitFor();
     assert.equal(messages[0].bulletin_type, "blocker");
     await page.getByRole("button", {name:"Blockers", exact:true}).click();
     await page.getByRole("article").getByText("Blocked on the API contract").waitFor();
@@ -537,6 +540,7 @@ const app = createServer(async (req, res) => {
     await page.getByRole("textbox", {name:"Message", exact:true}).fill("Here is the draft");
     await page.getByRole("button", {name:"Send", exact:true}).click();
     await page.getByText("Here is the draft", {exact:true}).waitFor();
+    await page.locator(".chat-bubble").filter({hasText:"Here is the draft"}).getByText("Team lead",{exact:true}).waitFor();
     assert.equal(chatDrafts, 1);
     assert.equal(messages.at(-1).thread_task, fixture.project_tasks[0].id);
     await page.getByRole("textbox", {name:"Message", exact:true}).fill("We agreed to use the web demo.");

@@ -14,8 +14,8 @@ const labels: Record<string, string> = {
 const visibleTools: Record<string, number> = {Today:3, Work:3, Team:3, Rules:2, Submit:3};
 
 type Project = { id: string; name: string; hackathon_name?: string; submission_deadline?: string };
-type Status = { usage?: string; usageReset?: string; sources?: string; unread?: number; needsGeminiKey?: boolean };
-type Props = { project: Project; sheet: string; available: string[]; open: (sheet: string) => void; addTeamKey?: () => void };
+type Status = { usage?: string; usageReset?: string; sources?: string; unread?: number; needsGeminiKey?: boolean; teamUsage?: string };
+type Props = { project: Project; sheet: string; available: string[]; open: (sheet: string) => void; addTeamKey?: (replace: boolean) => void };
 
 function ProjectShell({ project, sheet, available, open, addTeamKey, status }: Props & { status: Status }) {
   const entries = Object.entries(sections);
@@ -43,13 +43,14 @@ function ProjectShell({ project, sheet, available, open, addTeamKey, status }: P
         <div className="portal-head-controls">
           <p className="portal-header-deadline">{deadlineLabel(project.submission_deadline)}</p>
           {status.needsGeminiKey && addTeamKey && (
-            <button className="button subtle" type="button" onClick={addTeamKey}>Gemini · Add team key</button>
+            <button className="button subtle" type="button" onClick={() => addTeamKey(false)}>Gemini · Add team key</button>
           )}
           <details className="portal-usage">
             <summary className="button subtle">{status.needsGeminiKey && addTeamKey ? 'AI usage' : status.usage || 'AI usage'}</summary>
             <p>{status.needsGeminiKey ? 'The project lead manages the team Gemini key.' :
-              'Gemini studio requests' + (status.usageReset ? ' · Resets ' + status.usageReset : '')}</p>
+              (status.teamUsage || 'DraftDeck Gemini requests') + (status.usageReset ? ' · Resets ' + status.usageReset : '')}</p>
             <div className="shared-actions">
+              {status.needsGeminiKey === false && addTeamKey && <button type="button" className="button subtle" onClick={() => addTeamKey(true)}>Replace Gemini key</button>}
               {available.includes('AI credits') && link('AI credits', 'Provider credits')}
               {available.includes('Settings') && link('Settings', 'Connection settings')}
             </div>

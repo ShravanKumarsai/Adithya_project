@@ -374,6 +374,8 @@ export async function planningResponse(request, env, url, user) {
     const [legacy] = await legacyResponse.json();
     if (!await quota.reserve(user.id, dailyLimits.plan))
       return json(quota.exceeded("Today's planning limit has been reached.", dailyLimits.plan), 429);
+    if (!await quota.reserve("assist-project:" + projectId, dailyLimits.assistProject))
+      return json(quota.exceeded("The team reached its DraftDeck Gemini request limit for today.", dailyLimits.assistProject), 429);
 
     const context = {
       name: clip(project.name, 200),

@@ -131,7 +131,7 @@ revoke all on function public.studio_record_milestone_approval() from public,ano
 create trigger studio_record_milestone_approval after update of state on public.studio_timeline_proposals
 for each row execute function public.studio_record_milestone_approval();
 
-alter table public.studio_reports add column delivery jsonb not null default '{}'
+alter table public.studio_reports add column if not exists delivery jsonb not null default '{}'
   check (jsonb_typeof(delivery)='object' and octet_length(delivery::text)<=28000);
 
 create function aithya_private.publish_studio_delivery(p_project uuid, p_delivery jsonb)

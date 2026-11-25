@@ -160,10 +160,11 @@ export async function renderPortfolio({
       result(
         db
           .from("studio_portfolio_history")
-          .select("project_id,project_name,closed_at,contribution")
+          .select("project_id,project_name,closed_at,contribution,final_report")
           .eq("user_id", user.id)
           .order("closed_at", { ascending: false }),
-      ).catch(() => []),
+      ).catch(() => result(db.from("studio_portfolio_history").select("project_id,project_name,closed_at,contribution")
+        .eq("user_id",user.id).order("closed_at",{ascending:false})).catch(() => [])),
       result(
         db
           .from("project_tasks")
@@ -256,7 +257,8 @@ export async function renderPortfolio({
                 Number(h.contribution?.completed || 0) +
                 " tasks · " +
                 Number(h.contribution?.hours || 0) +
-                " logged hours</p></div></div>",
+                " logged hours</p></div>" +
+                (h.final_report?.members ? button("download-final-" + h.project_id,"Download final report") : "") + "</div>",
             )
             .join("")
         : "") +
@@ -284,6 +286,31 @@ export async function renderPortfolio({
         : '<p class="shared-note">Add your display name and profile to preview the portfolio.</p>') +
       "</section></div>";
     bind("portfolio-back", back);
+    for (const row of history.filter(item => item.final_report?.members)) {
+      bind("download-final-" + row.project_id, () => {
+        const report = row.final_report;
+        const delivery = report.delivery || {};
+        const documentText = [
+          row.project_name + " — Final report",
+          "Published " + new Date(report.closed_at).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"}),
+          delivery.start && delivery.end ? "Hackathon dates: " + delivery.start + " to " + delivery.end : "",
+          delivery.commit_first && delivery.commit_last
+            ? "Observed default-branch commits: " + delivery.commit_first + " to " + delivery.commit_last + " (" + delivery.commits_sample + " reviewed)" : "",
+          delivery.url ? "Project link: " + delivery.url : "",
+          ...report.members.map(member => [
+            member.name + " — " + member.role,
+            member.completed + " of " + member.assigned + " assigned tasks complete · " + member.hours + " logged hours",
+            member.onTime + " on time · " + member.late + " late · " + member.studioCalls + " DraftDeck AI requests",
+            ...(Number.isInteger(delivery.contributions?.[member.id]) ? [delivery.contributions[member.id] + " observed commits"] : []),
+            ...(member.contributions || []).map(task=>"- " + task),
+          ].join("\n")),
+        ].filter(Boolean).join("\n\n");
+        const href = URL.createObjectURL(new Blob([documentText],{type:"text/plain;charset=utf-8"}));
+        const link = Object.assign(document.createElement("a"),{href,download:"draftdeck-final-report.txt"});
+        link.click();
+        setTimeout(()=>URL.revokeObjectURL(href),1000);
+      });
+    }
     bind("portfolio-appearance", () =>
       modal(
         "Portfolio appearance",

@@ -1,3 +1,4 @@
+import { projectDeadline } from "./portal/routes.js";
 function csvCell(value) {
   const text = String(value ?? "");
   return (
@@ -66,6 +67,7 @@ export function mountReport(
     notify,
     session,
     refresh,
+    removeProject,
     escape,
     leader,
   },
@@ -135,10 +137,10 @@ export function mountReport(
     result(
       db
         .from("studio_reports")
-        .select("closed_at,snapshot" + ("studio_intake_applied" in project ? ",delivery" : ""))
+        .select("closed_at,snapshot,delivery")
         .eq("project_id", project.id)
         .maybeSingle(),
-    ),
+    ).catch(() => result(db.from("studio_reports").select("closed_at,snapshot").eq("project_id",project.id).maybeSingle())),
     project.repository || project.vercel_project_id
       ? fetch("/api/activity?report=1&project=" + encodeURIComponent(project.id), {
           headers: { authorization: "Bearer " + session.access_token },
@@ -193,10 +195,7 @@ export function mountReport(
         ? rows.reduce((sum, r) => sum + r.completed, 0)
         : data.tasks.filter((t) => t.status === "done").length;
       const totalHours = rows.reduce((n, r) => n + r.hours, 0).toFixed(1);
-      const finished =
-        project.submission_deadline &&
-        Date.now() >
-          new Date(project.submission_deadline + "T23:59:59Z").getTime();
+      const finished = Date.now() >= projectDeadline(project.submission_deadline);
       root.querySelector("#studio-report-content").innerHTML =
         '<div class="studio-metrics"><div><small>Completed tasks</small><strong>' +
         completed +
@@ -262,7 +261,7 @@ export function mountReport(
         )
           ? '<button type="button" class="button subtle" id="report-portfolio">Add my contribution to portfolio</button>'
           : "");
-      if (leader && !snapshot) {
+      if (leader && (!snapshot || !Object.keys(snapshot.delivery || {}).length)) {
         root
           .querySelector("#studio-report-content")
           .insertAdjacentHTML(
@@ -272,20 +271,34 @@ export function mountReport(
         bind("report-close", () =>
           modal(
             "Publish hackathon report",
-            '<p>Save the delivery record and each member’s logged time and contributions.</p>' +
+            '<p>Save the report to every participant’s portfolio, including delivery details, logged time, and contributions.</p>' +
               '<label>Final project URL (optional)<input name="delivery_url" type="url" maxlength="1000" value="' + escape(finalLink) + '"></label>',
             async form => {
               const link=String(form.get("delivery_url")||"").trim();
               if (link && !/^https:\/\/[^\s]+$/i.test(link)) throw Error("Use an HTTPS project URL.");
-              if ("studio_intake_applied" in project)
-                await rpc("publish_studio_delivery",{p_project:project.id,p_delivery:{...delivery,url:link}});
-              else await rpc("close_studio_report",{p_project:project.id});
+              const published = await db.rpc("publish_draftdeck_final_report",{p_project:project.id,p_delivery:{...delivery,url:link}});
+              if (published.error?.code === "PGRST202") await rpc("close_studio_report",{p_project:project.id});
+              else if (published.error) throw Error(published.error.message);
               notify("Hackathon report published.");
             },
             refresh,
             "Publish report",
           ),
         );
+      }
+      if (leader && finished && snapshot && Object.keys(snapshot.delivery || {}).length) {
+        root.querySelector("#studio-report-content").insertAdjacentHTML("beforeend",
+          '<section class="bp-panel"><h3>Close this hackathon</h3><p>The final report is available in each participant’s portfolio. Archive the project from Overview to keep the workspace, or delete it here.</p>' +
+          '<button type="button" class="button subtle" id="report-delete-project">Delete project</button></section>');
+        bind("report-delete-project", () => modal(
+          "Permanently delete project",
+          '<p>This removes the project workspace, including its board and chats. Each participant keeps their saved report.</p>' +
+          '<label>Type the exact project name <strong>' + escape(project.name) + '</strong><input name="project_name" required autocomplete="off"></label>',
+          async form => {
+            if (form.get("project_name") !== project.name) throw Error("Enter the exact project name.");
+            await rpc("delete_finished_draftdeck_project",{p_project:project.id,p_name:form.get("project_name")});
+          }, removeProject, "Permanently delete project",
+        ));
       }
       for (const id of ["report-export", "report-share"])
         root.querySelector("#" + id).disabled = false;

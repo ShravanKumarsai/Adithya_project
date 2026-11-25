@@ -427,8 +427,18 @@ async function workspace() {
   if (activeRoute === "profile") {
     main.innerHTML=skeleton("Loading your profile");
     try {
-      const profile = await readAccountProfile(session.user.id);
-      if (version === generation) openAccountInterview(profile?.intake, () => navigate("/shared"));
+      const [profile, completed] = await Promise.all([
+        readAccountProfile(session.user.id),
+        db.from("studio_portfolio_history").select("project_id",{count:"exact",head:true}).eq("user_id",session.user.id),
+      ]);
+      if (version === generation) {
+        openAccountInterview(profile?.intake, () => navigate("/shared"));
+        const home = main.querySelector(".intake-page");
+        home.querySelector("header").insertAdjacentHTML("afterend",
+          '<p><a class="button subtle" href="/shared?view=usage" data-studio-route>My AI connections</a> ' +
+          '<a class="button subtle" href="/shared?view=portfolio" data-studio-route>Hackathon history and reports' +
+          (Number.isInteger(completed.count) ? ' (' + completed.count + ')' : '') + '</a></p>');
+      }
     } catch (error) {
       if (version !== generation) return;
       main.innerHTML = errorBox(error) + button("profile-retry","Retry profile");
@@ -475,7 +485,7 @@ async function workspace() {
         result(db.from("studio_claude_connections").select("project_id,provider").eq("user_id", session.user.id)),
       ]);
       if (version !== generation) return;
-      main.innerHTML = '<header class="shared-header"><h1>AI usage</h1></header><section class="project-list">' +
+      main.innerHTML = '<header class="shared-header"><h1>AI usage</h1></header><div id="account-credits"></div><section class="project-list">' +
         (projects.map((item) => {
           const connected = connections.filter((c) => c.project_id === item.id).length;
           const manual = accounts.filter((c) => c.project_id === item.id).length;
@@ -483,6 +493,16 @@ async function workspace() {
             connected + ' live · ' + manual + ' manual</p></div><a class="button subtle" data-studio-route href="/shared?project=' +
             encodeURIComponent(item.id) + '&amp;sheet=AI+credits">AI credits</a></article>';
         }).join("") || '<p>No projects yet.</p>') + '</section>';
+      const creditsHost = document.getElementById("account-credits");
+      const {mountAccountCredits} = await import("./personal-studio.js");
+      if (creditsHost.isConnected && version === generation) {
+        const dispose = await mountAccountCredits({host:creditsHost,db,userId:session.user.id,result,modal,notify})
+          .catch(error=>{if(creditsHost.isConnected)creditsHost.innerHTML=errorBox(error);});
+        if (typeof dispose === "function") {
+          if (creditsHost.isConnected && version === generation) detachSheet=dispose;
+          else dispose();
+        }
+      }
       return;
     }
     const [projects, serverDrafts, totals] = await Promise.all([
@@ -1108,6 +1128,7 @@ async function renderProject() {
     (data.personalReady || !["My dashboard", "AI credits", "Register", "Settings"].includes(sheet)) &&
     (data.portalReady || sheet !== "Bulletin"));
   if (tab === "Planning board") tab = "Board";
+  if (tab === "Register") tab = "My dashboard";
   if (!tabs.includes(tab)) tab = "Overview";
   const viewAliases = {"Project setup":"Setup", Chats:"Chat", "AI mentor":"Mentor", "Ship check":"Ship", "Planning board":"Planning"};
   const view = viewAliases[tab] || tab;
@@ -1122,10 +1143,10 @@ async function renderProject() {
   if (!host.isConnected) return;
   panel.replaceChildren();
   const shell = mountProjectShell(host, { project, sheet:tab, available:tabs, open:showProjectSheet,
-    addTeamKey: leader() && !project.archived_at ? () => {
+    addTeamKey: leader() && !project.archived_at ? replace => {
       import("./personal-studio.js").then(({openProjectConnectionKey}) => {
         if (!host.isConnected) return;
-        openProjectConnectionKey({tool:"Gemini",projectId:project.id,session,modal,
+        openProjectConnectionKey({tool:"Gemini",projectId:project.id,session,modal,replace,
           refresh: async () => {
             notify("Gemini key saved for this project.");
             if (host.isConnected) await loadProject();
@@ -1137,10 +1158,11 @@ async function renderProject() {
   const unreadKey = "chat-count-" + session.user.id + project.id;
   if (view === "Chat") sessionStorage.removeItem(unreadKey);
   shell.update({unread:Number(sessionStorage.getItem(unreadKey) || 0)});
-  void updateProjectStatus(project, session, shell, tab, () => host.isConnected);
+  const refreshStatus = () => updateProjectStatus(project, session, shell, tab, () => host.isConnected);
+  void refreshStatus();
   ({
     Overview: overviewView,
-    Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,escape,leader:leader()},document.getElementById("shared-content")),
+    Report:()=>mountReport({project,data,db,result,rpc,modal,notify,session,refresh:loadProject,removeProject:()=>navigate("/shared"),escape,leader:leader()},document.getElementById("shared-content")),
     "AI plan": () => renderPlanning({db, project, leader:leader(), ai:data.ai, escape,
       when, result, notify, editPolicy:editAiPolicy, requirements:data.requirements, tasks:data.tasks, refresh:loadProject}),
     Setup: requirementsView,
@@ -1154,7 +1176,8 @@ async function renderProject() {
   })[view]?.();
   const openSheet=next=>showProjectSheet(Object.keys(viewAliases).find(label=>viewAliases[label]===next)||next);
   let detachView = () => {};
-  detachSheet = () => { detachView(); shell.dispose(); };
+  const usageTimer = setInterval(() => { if (!document.hidden && host.isConnected) void refreshStatus(); }, 20000);
+  detachSheet = () => { clearInterval(usageTimer); detachView(); shell.dispose(); };
   if (view === "Bulletin") {
     panel.innerHTML = skeleton("Loading bulletin");
     const {mountBulletin} = await import("./portal/Bulletin.tsx");

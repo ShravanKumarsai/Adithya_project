@@ -98,14 +98,82 @@ async function projectConnection(projectId, session, tool, method = "GET", key, 
   return status;
 }
 
-export function openProjectConnectionKey({tool, projectId, session, modal, refresh}) {
-  modal("Save " + tool + " key",
+export function openProjectConnectionKey({tool, projectId, session, modal, refresh, replace=false}) {
+  modal((replace ? "Replace " : "Save ") + tool + " key",
     field("key", tool + " API key", "", "password", 'required autocomplete="off" autofocus maxlength="256"'),
     async form => {
       const key = String(form.get("key") || "").trim();
       if (!key) throw Error("Enter an API key.");
       await projectConnection(projectId, session, tool, "PUT", key);
     }, refresh, "Save key");
+}
+
+const creditProviders = {claude:"Claude Code",codex:"ChatGPT · Codex"};
+const creditProviderLinks = {claude:"https://claude.ai/settings/usage",codex:"https://chatgpt.com/codex/settings/usage"};
+const creditWindowLabels = {five_hour:"5-hour limit",seven_day:"Weekly limit",primary:"Primary limit",secondary:"Secondary limit"};
+
+async function downloadCreditConnector(provider, project, getToken) {
+  const response = await fetch("/ai-credit-connector.txt");
+  if (!response.ok) throw Error("Could not download the connector. Try again.");
+  const source = await response.text();
+  const placeholder = "PAIRING = None";
+  if (!source.includes(placeholder)) throw Error("The connector download is unavailable.");
+  const token = await getToken();
+  const script = source.replace(placeholder, () => "PAIRING = " + JSON.stringify({provider,project,token}));
+  const href = URL.createObjectURL(new Blob([script],{type:"text/x-python"}));
+  const link = Object.assign(document.createElement("a"),{href,download:"aithya-" + provider + "-setup.py"});
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(()=>URL.revokeObjectURL(href),30000);
+}
+
+export async function mountAccountCredits({host,db,userId,result,modal,notify}) {
+  async function draw() {
+    const rows = await result(db.from("studio_claude_connections")
+      .select("id,provider,studio_claude_windows(window_key,used,reset_at,synced_at)")
+      .eq("user_id",userId).is("project_id",null));
+    if (!host.isConnected) return;
+    host.innerHTML = panel("My AI connections",
+      "<p>Connect one Codex and one Claude Code account for all your projects. Your personal usage readings stay private.</p>" +
+      Object.entries(creditProviders).map(([provider,label])=>{
+        const row = rows.find(item=>item.provider===provider);
+        return '<section class="shared-row"><div><h3>' + escape(label) + '</h3>' +
+          (row?.studio_claude_windows?.length ? row.studio_claude_windows.map(window=>
+            "<p>" + escape(creditWindowLabels[window.window_key]) + " · " +
+            (Date.parse(window.reset_at) <= Date.now() ? "Reset time passed · awaiting a fresh reading" :
+              escape(window.used) + "% used · Resets " + escape(when(window.reset_at))) + "</p>").join("") :
+            "<p>" + (row ? "Waiting for the first reading." : "Set up once from your computer.") + "</p>") +
+          '</div><div class="shared-actions"><a class="button subtle" href="' + creditProviderLinks[provider] +
+          '" target="_blank" rel="noreferrer">Provider usage</a>' + button("account-"+provider,row?"Download setup again":"Connect "+label) +
+          (row ? button("remove-account-"+provider,"Disconnect "+label) : "") + "</div></section>";
+      }).join("") + button("refresh-credits","Refresh usage"));
+    host.querySelector('[data-v3="refresh-credits"]').onclick=()=>draw().catch(error=>notify(error.message));
+    for (const provider of Object.keys(creditProviders)) {
+      const label = creditProviders[provider];
+      const row = rows.find(item=>item.provider===provider);
+      host.querySelector('[data-v3="account-'+provider+'"]').onclick=()=>modal("Connect "+label,
+        '<p>Sign in to the provider’s command line app, then download and run this private setup file on the same computer.</p>' +
+        '<p>Windows PowerShell · <code>py "$HOME\\Downloads\\aithya-' + provider + '-setup.py"</code></p>' +
+        '<p>macOS or Linux · <code>python3 ~/Downloads/aithya-' + provider + '-setup.py</code></p>' +
+        (provider==="codex" ? "<p>Keep that terminal open for live usage updates.</p>" : "<p>Restart Claude Code and send a message to refresh usage.</p>") +
+        (row ? "<p>Downloading again replaces the previous setup file’s pairing.</p>" : ""),
+        ()=>downloadCreditConnector(provider,"account",async ()=>{
+          const {data,error} = await db.rpc("connect_draftdeck_account_credit",{p_provider:provider});
+          if (error?.code === "PGRST202") throw Error("Account-wide pairing is pending. You can use Provider usage or set up a connection in your project’s AI credits.");
+          if (error) throw Error(error.message);
+          return data;
+        }),draw,"Download setup file");
+      const disconnect=host.querySelector('[data-v3="remove-account-'+provider+'"]');
+      if (disconnect) disconnect.onclick=()=>modal("Disconnect "+label,
+        "<p>This stops future usage updates from this pairing.</p>",
+        ()=>result(db.from("studio_claude_connections").delete().eq("id",row.id)),draw,"Disconnect");
+    }
+  }
+  await draw();
+  if (!host.isConnected) return () => {};
+  const timer = setInterval(() => { if (!document.hidden && host.isConnected) draw().catch(()=>{}); },30000);
+  return () => clearInterval(timer);
 }
 
 export function mountPersonalStudio(ctx) {
@@ -679,51 +747,19 @@ export function mountPersonalStudio(ctx) {
         .eq("project_id", id),
     );
   }
-  const providers = {claude: "Claude Code", codex: "ChatGPT · Codex"};
-  const windowLabels = {
-    five_hour: "5-hour limit", seven_day: "Weekly limit",
-    primary: "Primary limit", secondary: "Secondary limit",
-  };
-  function connectorSetup(provider, existing) {
-    const title = providers[provider];
-    const filename = "aithya-" + provider + "-setup.py";
-    form(
-      "Connect " + title,
-      "<p>Sign in to " + escape(title) + " on your computer first. Download and run your personal setup file once to start syncing. Keep the file private.</p>" +
-        '<p>On macOS or Linux, run <code>python3 ~/Downloads/' + filename + '</code> after downloading.</p>' +
-        (provider === "codex" ? "<p>Keep the terminal open while you want Codex usage to sync.</p>" :
-          "<p>Restart Claude Code and send a message after setup.</p>") +
-        (existing ? "<p>A new download revokes the previous connector for this project.</p>" : ""),
-      async () => {
-        const response = await fetch("/ai-credit-connector.txt");
-        if (!response.ok) throw Error("Could not download the connector. Try again.");
-        const source = await response.text();
-        const placeholder = "PAIRING = None";
-        if (!source.includes(placeholder)) throw Error("The connector download is unavailable.");
-        const token = await rpc("connect_studio_ai_provider", {p_project: id, p_provider: provider});
-        const pairing = JSON.stringify({provider, project: id, token});
-        const script = source.replace(placeholder, () => "PAIRING = " + pairing);
-        const href = URL.createObjectURL(new Blob([script], {type: "text/x-python"}));
-        const link = Object.assign(document.createElement("a"), {href, download: filename});
-        document.body.append(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(href), 30000);
-      },
-      refresh,
-    );
-    document.querySelector("#shared-form button.primary").textContent = "Download setup file";
-  }
+  const providers = creditProviders;
+  const windowLabels = creditWindowLabels;
   function drawLiveCredits(target, ownOnly, reload) {
     const mine = liveCredits.filter((c) => c.user_id === user);
     const now = Date.now();
     const visible = liveCredits.filter((c) => !ownOnly || c.user_id === user);
+    const projectSetupOpen = target.querySelector("details")?.open;
     target.innerHTML = panel(
       "Live usage",
       '<p>Connect Claude Code or Codex for real usage and reset alerts. Codex tracks its own ChatGPT allowance.</p>' +
-        Object.entries(providers).map(([provider, label]) =>
-          button("provider-" + provider, (mine.some((c) => c.provider === provider) ? "Set up again · " : "Connect ") + label)
-        ).join(" ") +
+        '<a class="button subtle" href="/shared?view=usage" data-studio-route>Manage my AI connections</a>' +
+        '<details' + (projectSetupOpen ? ' open' : '') + '><summary>Connect only to this project</summary><div class="shared-actions">' +
+        Object.entries(providers).map(([provider,label])=>button("project-credit-"+provider,label)).join("") + '</div></details>' +
         (visible.length ? '<div class="studio-table-wrap" tabindex="0" aria-label="Live AI quota windows"><table class="studio-table credits-table"><thead><tr><th scope="col">Account</th><th scope="col">Window</th><th scope="col">Usage</th><th scope="col">Reset</th></tr></thead><tbody>' +
           visible.map((connection) => {
             const windows = connection.studio_claude_windows;
@@ -745,9 +781,11 @@ export function mountPersonalStudio(ctx) {
           button("sharing-" + c.id, c.shared ? "Make private" : "Share with team") +
           button("disconnect-" + c.id, "Disconnect") + '</div>').join(""),
     );
-    Object.keys(providers).forEach((provider) =>
-      bind("provider-" + provider, () => connectorSetup(provider, mine.some((c) => c.provider === provider)), target)
-    );
+    for (const [provider,label] of Object.entries(providers)) {
+      bind("project-credit-"+provider,()=>form("Connect "+label,
+        '<p>Sign in to the provider’s command line app on your computer. Download the private setup file and run it with Python. A new download replaces this project’s previous pairing for the same provider.</p>',
+        ()=>downloadCreditConnector(provider,id,()=>rpc("connect_studio_ai_provider",{p_project:id,p_provider:provider})),reload),target);
+    }
     for (const connection of mine) {
       bind("sharing-" + connection.id, async () => {
         await result(db.from("studio_claude_connections").update({shared: !connection.shared}).eq("id", connection.id));
@@ -1083,6 +1121,7 @@ export function mountPersonalStudio(ctx) {
             (m.author_id === user ? "mine" : "theirs") +
             '"><small>' +
             escape(m.author_id === user ? "You" : name(m.author_id)) +
+            (m.author_id === project.leader_id ? ' <span class="chat-lead">Team lead</span>' : "") +
             " · " +
             escape(when(m.created_at)) +
             "</small><p>" +
